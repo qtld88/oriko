@@ -195,33 +195,57 @@ export function ytdlpPath(): string | null {
   return toolPath("yt-dlp", toolOverrides.ytdlp);
 }
 
-/** Runs a command and resolves its stdout, or null if it failed. */
-function runCapturing(command: string, args: string[]): Promise<string | null> {
+interface CapturedRun {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  /** Killed for running past its timeout, as opposed to exiting with an error. */
+  timedOut: boolean;
+}
+
+/** Runs a command and resolves what it printed, and whether it finished cleanly. */
+function runCapturing(command: string, args: string[]): Promise<CapturedRun> {
+  const failed: CapturedRun = { ok: false, stdout: "", stderr: "", timedOut: false };
   const cp = nodeRequire("child_process") as
     | { execFile: (
         file: string,
         args: string[],
         options: { timeout: number; maxBuffer: number },
-        callback: (error: unknown, stdout: string) => void
+        callback: (error: unknown, stdout: string, stderr: string) => void
       ) => void }
     | null;
-  if (!cp) return Promise.resolve(null);
+  if (!cp) return Promise.resolve(failed);
 
-  return new Promise<string | null>((resolve) => {
+  return new Promise<CapturedRun>((resolve) => {
     try {
       cp.execFile(
         command,
         args,
         { timeout: DOWNLOAD_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
-        (error: unknown, stdout: string) => resolve(error ? null : stdout)
+        (error: unknown, stdout: string, stderr: string) => {
+          // Node marks a child it killed; overflowing maxBuffer kills too,
+          // and that is not the clock running out.
+          const killed = error as { killed?: boolean; code?: unknown } | null;
+          resolve({
+            ok: !error,
+            stdout: stdout ?? "",
+            stderr: stderr ?? "",
+            timedOut:
+              Boolean(killed?.killed) && killed?.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+          });
+        }
       );
     } catch {
-      resolve(null);
+      resolve(failed);
     }
   });
 }
 
-const DOWNLOAD_TIMEOUT_MS = 180000;
+export const DOWNLOAD_TIMEOUT_MS = 180000;
+
+export type SourceVideoDownload =
+  | { ok: true; data: ArrayBuffer; extension: string }
+  | { ok: false; stderr: string; timedOut: boolean };
 
 /**
  * Downloads a post's video with yt-dlp, which speaks these sites natively.
@@ -234,18 +258,17 @@ const DOWNLOAD_TIMEOUT_MS = 180000;
  * so Obsidian never sees a half-written file and the bytes are handed to
  * the vault API like any other download.
  */
-export async function downloadSourceVideo(
-  pageUrl: string
-): Promise<{ data: ArrayBuffer; extension: string } | null> {
+export async function downloadSourceVideo(pageUrl: string): Promise<SourceVideoDownload> {
+  const nothing: SourceVideoDownload = { ok: false, stderr: "", timedOut: false };
   const ytdlp = ytdlpPath();
   const fs = nodeRequire("fs") as FsModule | null;
   const os = nodeRequire("os") as OsModule | null;
-  if (!ytdlp || !fs || !os) return null;
+  if (!ytdlp || !fs || !os) return nothing;
 
   let dir: string | null = null;
   try {
     dir = fs.mkdtempSync(`${os.tmpdir()}/oriko-`);
-    const stdout = await runCapturing(ytdlp, [
+    const run = await runCapturing(ytdlp, [
       "--no-warnings",
       "--no-playlist",
       "--no-progress",
@@ -259,8 +282,12 @@ export async function downloadSourceVideo(
       pageUrl,
     ]);
 
-    const file = stdout?.trim().split("\n").pop()?.trim();
-    if (!file || !fs.existsSync(file)) return null;
+    // yt-dlp's stderr is kept so the caller can tell a refused or
+    // timed-out download from a post that simply has no video.
+    if (!run.ok) return { ok: false, stderr: run.stderr, timedOut: run.timedOut };
+
+    const file = run.stdout.trim().split("\n").pop()?.trim();
+    if (!file || !fs.existsSync(file)) return nothing;
 
     const buffer = fs.readFileSync(file);
     const data = buffer.buffer.slice(
@@ -268,9 +295,9 @@ export async function downloadSourceVideo(
       buffer.byteOffset + buffer.byteLength
     );
     const dot = file.lastIndexOf(".");
-    return { data, extension: dot > 0 ? file.slice(dot + 1).toLowerCase() : "mp4" };
+    return { ok: true, data, extension: dot > 0 ? file.slice(dot + 1).toLowerCase() : "mp4" };
   } catch {
-    return null;
+    return nothing;
   } finally {
     if (dir) {
       try {

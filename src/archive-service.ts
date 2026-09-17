@@ -5,6 +5,7 @@ import { readDimensions } from "./core/dimensions";
 import {
   absolutePath,
   conversionAvailable,
+  DOWNLOAD_TIMEOUT_MS,
   convertImageToPng,
   downloadSourceVideo,
   extractVideoFrame,
@@ -21,8 +22,16 @@ import type { CanonicalMedia } from "./core/normalize";
 import { extractPageImage, knownHostThumbnail, needsPageCover } from "./core/page-cover";
 import type { ClippingRecord } from "./core/scan";
 import type { OrikoSettings } from "./core/settings";
+import { describeVideoProblems, ytdlpProblem } from "./core/video-problems";
+import type { VideoProblem } from "./core/video-problems";
 
 const CACHE_FILE = "cache.json";
+
+/** Long enough to read a sentence that ends in what to do about it. */
+const PROBLEM_NOTICE_MS = 10000;
+
+/** Where a video problem goes: straight to a toast, or into a pass's pile. */
+type ProblemSink = (problem: VideoProblem) => void;
 
 export interface ArchiveSummary {
   ok: number;
@@ -40,6 +49,19 @@ export class ArchiveService {
     private settings: () => OrikoSettings,
     private cacheDir: string
   ) {}
+
+  /**
+   * Tells the user about videos that did not arrive for a reason they can
+   * act on. Everything else about archiving stays quiet.
+   */
+  private announce(problems: VideoProblem[]): void {
+    const limits = { maxBytes: this.settings().maxBytes, timeoutMs: DOWNLOAD_TIMEOUT_MS };
+    for (const message of describeVideoProblems(problems, limits)) {
+      new Notice(message, PROBLEM_NOTICE_MS);
+    }
+  }
+
+  private readonly announceNow: ProblemSink = (problem) => this.announce([problem]);
 
   onChange(cb: () => void): void {
     this.listeners.push(cb);
@@ -233,7 +255,11 @@ export class ArchiveService {
    * every launch; on for the explicit command, so a transient outage or a
    * network change can be recovered from.
    */
-  async archiveRecord(record: ClippingRecord, retryFailed = false): Promise<void> {
+  async archiveRecord(
+    record: ClippingRecord,
+    retryFailed = false,
+    report: ProblemSink = this.announceNow
+  ): Promise<void> {
     const canonical = dedupeMedia(record.media).filter((m) => {
       // An embedded file in the vault is already archived by definition.
       if (!/^https?:\/\//i.test(m.url)) return false;
@@ -244,7 +270,7 @@ export class ArchiveService {
     // Runs regardless of whether anything inline is outstanding: on a
     // re-archive every ref is already on disk, and the post's own video
     // would otherwise never be fetched.
-    await this.archiveSourceVideo(record, retryFailed);
+    await this.archiveSourceVideo(record, retryFailed, report);
 
     if (canonical.length === 0) {
       await this.resolvePageCover(record, retryFailed);
@@ -279,9 +305,10 @@ export class ArchiveService {
    */
   private async archiveSourceVideo(
     record: ClippingRecord,
-    retryFailed: boolean
+    retryFailed: boolean,
+    report: ProblemSink
   ): Promise<void> {
-    await this.downloadSourceVideoFor(record.source, retryFailed);
+    await this.downloadSourceVideoFor(record.source, retryFailed, record.title, report);
   }
 
   /**
@@ -291,7 +318,9 @@ export class ArchiveService {
    */
   async downloadSourceVideoFor(
     source: string,
-    retryFailed: boolean
+    retryFailed: boolean,
+    title = "",
+    report: ProblemSink = this.announceNow
   ): Promise<string | null> {
     if (!source || !supportsSourceDownload(source)) return null;
 
@@ -319,7 +348,7 @@ export class ArchiveService {
     // else goes through yt-dlp. Each route records its own failure.
     const result = isThreadsUrl(source)
       ? await this.sniffedVideo(source, key)
-      : await this.ytdlpVideo(source, key);
+      : await this.ytdlpVideo(source, key, (kind) => report({ kind, source, title }));
     if (!result) return null;
 
     if (result.data.byteLength > this.settings().maxBytes) {
@@ -328,6 +357,7 @@ export class ArchiveService {
         kind: "video",
         failed: `too large (${result.data.byteLength} bytes)`,
       });
+      report({ kind: "too-large", source, title, bytes: result.data.byteLength });
       return null;
     }
 
@@ -350,7 +380,8 @@ export class ArchiveService {
   /** The yt-dlp route: a local tool the user installed, desktop only. */
   private async ytdlpVideo(
     source: string,
-    key: string
+    key: string,
+    onProblem: (kind: "refused" | "timed-out") => void
   ): Promise<{ data: ArrayBuffer; extension: string } | null> {
     if (!conversionAvailable() || !ytdlpPath()) {
       // Recorded rather than skipped silently, so a missing tool is
@@ -360,11 +391,21 @@ export class ArchiveService {
     }
 
     const result = await downloadSourceVideo(source);
-    if (!result) {
-      this.cache.mergeOutcome({ key, kind: "video", failed: "yt-dlp found no video" });
+    if (!result.ok) {
+      // Only a refusal or a timeout is announced. A post with no video in it
+      // fails the same way every time and has nothing to tell the user.
+      const problem = ytdlpProblem(result.stderr, result.timedOut);
+      const failed =
+        problem === "refused"
+          ? "yt-dlp was refused (HTTP 403)"
+          : problem === "timed-out"
+            ? "yt-dlp timed out"
+            : "yt-dlp found no video";
+      this.cache.mergeOutcome({ key, kind: "video", failed });
+      if (problem) onProblem(problem);
       return null;
     }
-    return result;
+    return { data: result.data, extension: result.extension };
   }
 
   /**
@@ -412,7 +453,8 @@ export class ArchiveService {
     source: string,
     media: Array<{ url: string; kind: "image" | "video" }>,
     onProgress?: (done: number, total: number) => void,
-    onStage?: (label: string) => void
+    onStage?: (label: string) => void,
+    title = ""
   ): Promise<{ byUrl: Map<string, string>; sourceVideo: string | null }> {
     const byUrl = new Map<string, string>();
     const canonical: CanonicalMedia[] = media.map((m) => ({
@@ -441,7 +483,7 @@ export class ArchiveService {
     let sourceVideo: string | null = null;
     if (!haveVideo && supportsSourceDownload(source)) {
       onStage?.("Fetching video…");
-      sourceVideo = await this.downloadSourceVideoFor(source, true);
+      sourceVideo = await this.downloadSourceVideoFor(source, true, title);
     }
 
     // Scoped to what was just archived: capture must never wait behind the
@@ -545,16 +587,20 @@ export class ArchiveService {
   }
 
   /**
-   * Background pass: fills in whatever is missing without blocking or
-   * announcing itself. The grid shows remote covers meanwhile and swaps to
-   * local ones as they land.
+   * Background pass: fills in whatever is missing without blocking. The grid
+   * shows remote covers meanwhile and swaps to local ones as they land. The
+   * only thing it announces is a video that could not be saved for a reason
+   * the user can fix.
    */
   async archiveMissing(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    // Gathered for one toast per kind at the end, so a device catching up on
+    // a vault's worth of clippings does not stack a toast for each.
+    const problems: VideoProblem[] = [];
     try {
       for (const record of this.index.records()) {
-        await this.archiveRecord(record, false);
+        await this.archiveRecord(record, false, (p) => problems.push(p));
       }
       await this.deriveAssets();
       await this.saveCache();
@@ -562,6 +608,7 @@ export class ArchiveService {
       // Background work never interrupts the user; the next pass retries.
     } finally {
       this.running = false;
+      this.announce(problems);
     }
   }
 
@@ -571,11 +618,12 @@ export class ArchiveService {
       return this.summary();
     }
     this.running = true;
+    const problems: VideoProblem[] = [];
     try {
       // The explicit command retries everything, hopeless renders included.
       this.cache.clearThumbFailures();
       for (const record of this.index.records()) {
-        await this.archiveRecord(record, true);
+        await this.archiveRecord(record, true, (p) => problems.push(p));
       }
       // Catches anything downloaded on an earlier run that never got a
       // thumbnail, for instance because the view was closed at the time.
@@ -583,6 +631,7 @@ export class ArchiveService {
       await this.saveCache();
     } finally {
       this.running = false;
+      this.announce(problems);
     }
     return this.summary();
   }
