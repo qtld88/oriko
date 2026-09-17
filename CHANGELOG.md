@@ -5,7 +5,7 @@ All notable changes to Oriko will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.61] - 2026-09-17
 
 ### Added
 - **Oriko now tells you when a video can't be saved, and what to do about it.** If a site like YouTube turns yt-dlp away (updating yt-dlp usually fixes that), a video is over your limit in Settings → Oriko → Downloads → Maximum file size (MB), or a download runs past three minutes, you get a note naming the clipping. A post that simply has no video stays quiet, as before.
