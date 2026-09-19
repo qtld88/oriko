@@ -19,6 +19,7 @@ import type { Box, FlightShape } from "./core/layout";
 import type { TileModel } from "./core/tile";
 import { paintSwatchStrip, readSwatches } from "./core/swatch-strip";
 import { attachTip } from "./core/tip";
+import { canShareFiles } from "./core/share";
 import { systemAvailable } from "./core/system";
 import { clampPan, detailLayout, fitZoomRange } from "./core/viewer";
 import type { DetailLayout } from "./core/viewer";
@@ -28,6 +29,12 @@ export interface DetailActions {
   onReveal: (id: string) => void;
   onDelete: (id: string) => void;
   onOpenNote: (id: string) => void;
+  /**
+   * Opens one archived file, by its vault path, in a tab. Takes a path rather
+   * than a clipping id because the panel is describing one picture and the
+   * clipping may have several; the id would lose which one was asked for.
+   */
+  onOpenFile: (path: string) => void;
   /**
    * Opens the property rows, anchored at the button that asked. The view owns
    * the menu and the single writer behind it, so this passes the request on
@@ -574,7 +581,26 @@ export class DetailView {
     if (model.width > 4 && model.height > 3) {
       field("Resolution", `${model.width} × ${model.height}`);
     }
-    field("Filename", model.filePath.slice(model.filePath.lastIndexOf("/") + 1));
+    // The row names a file sitting in the vault, so it opens it. Plain text
+    // while the tile is still showing the origin server's copy: there is no
+    // local file yet, and a control that answers a tap with an apology is
+    // worse than a label.
+    const fileName = model.filePath.slice(model.filePath.lastIndexOf("/") + 1);
+    if (fileName && !model.remote) {
+      const block = panel.createDiv({ cls: "pg-detail-field" });
+      block.createDiv({ cls: "pg-detail-label", text: "Filename" });
+      const value = block.createDiv({ cls: "pg-detail-value" });
+      const open = value.createEl("button", { cls: "pg-detail-link", text: fileName });
+      open.onclick = (event: MouseEvent) => {
+        event.stopPropagation();
+        // Closed first, the way Open note is: the file arrives in a leaf
+        // behind the overlay, which would otherwise sit over it.
+        this.close();
+        this.actions.onOpenFile(model.filePath);
+      };
+    } else {
+      field("Filename", fileName);
+    }
     // The whole address, as a link out to the page. It was shown as the
     // domain with the URL on hover, and the hover is not there on a phone;
     // the value wraps anywhere, so a long one costs lines, not clipping.
@@ -686,18 +712,27 @@ export class DetailView {
         () => window.open(model.record.source)
       );
     }
-    // Both reach for the filesystem, which mobile does not have. Gated the way
-    // the wall's context menu already gates them: without this the bar shows
-    // two controls that cannot work, and Export answers a tap by claiming
-    // nothing has been archived, when the truth is there is nowhere to put it.
-    if (systemAvailable()) {
+    // Saving a copy out means two different things and one button. Desktop
+    // copies into ~/Downloads through node's fs; mobile has no folder of its
+    // own to write to, so it hands the bytes to the system share sheet and
+    // the destination becomes the user's choice. The label says which one is
+    // on offer, and the view sorts out the rest.
+    //
+    // Still gated, because a host with neither is a control that cannot work:
+    // Export used to answer a tap on a phone by claiming nothing had been
+    // archived, when the truth was there was nowhere to put it.
+    if (systemAvailable() || canShareFiles(navigator)) {
       add(
         "download",
-        "Export to Downloads",
+        systemAvailable() ? "Export to Downloads" : "Save to device",
         "\u2318E",
         (event) => mod(event) && !event.shiftKey && event.key.toLowerCase() === "e",
         () => this.actions.onExport(model.id)
       );
+    }
+    // No mobile counterpart: there is no file manager behind the app to
+    // reveal anything in.
+    if (systemAvailable()) {
       add(
         "folder",
         "Reveal in Finder",

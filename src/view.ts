@@ -3,6 +3,9 @@ import { ItemView, Notice, Platform, TFile, WorkspaceLeaf, normalizePath } from 
 import { absolutePath } from "./convert";
 import { dedupeMedia, sourceVideoKeyFor } from "./core/normalize";
 import { copyToDownloads, revealInFinder, systemAvailable } from "./core/system";
+import { canShareFiles, shareFiles, shareNotice } from "./core/share";
+import type { ShareItem } from "./core/share";
+import { mimeForPath } from "./core/formats";
 import { ActionBar } from "./action-bar";
 import { buildCommands, facetValueCommands } from "./core/commands";
 import type { PaletteContext } from "./core/commands";
@@ -409,6 +412,7 @@ export class OrikoView extends ItemView {
       onReveal: (id) => this.revealFirstFile(id),
       onDelete: (id) => this.confirmDelete([id]),
       onOpenNote: (id) => this.openNote(id),
+      onOpenFile: (path) => this.openFile(path),
       onEditProperties: (id, x, y) => this.editProperties([id], x, y),
       isMenuOpen: () => this.menu?.isOpen ?? false,
     }, () => this.look().filterProperties);
@@ -904,21 +908,23 @@ export class OrikoView extends ItemView {
       }
     }
 
-    if (systemAvailable()) {
+    // Desktop copies into ~/Downloads; mobile hands the file to the share
+    // sheet. Same row, same method behind it, and the label says which.
+    if (systemAvailable() || canShareFiles(navigator)) {
       reach.push({
         icon: "download",
-        label: "Export to Downloads",
+        label: systemAvailable() ? "Export to Downloads" : "Save to device",
         detail: "⌘E",
         onSelect: () => void this.exportToDownloads(ids),
       });
+    }
 
-      if (n === 1) {
-        reach.push({
-          icon: "folder",
-          label: "Reveal in Finder",
-          onSelect: () => this.revealFirstFile(ids[0]),
-        });
-      }
+    if (systemAvailable() && n === 1) {
+      reach.push({
+        icon: "folder",
+        label: "Reveal in Finder",
+        onSelect: () => this.revealFirstFile(ids[0]),
+      });
     }
 
     if (this.canFile()) {
@@ -1016,6 +1022,22 @@ export class OrikoView extends ItemView {
     if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
   }
 
+  /**
+   * Opens one archived file in a tab, which is what the detail panel's
+   * Filename row asks for.
+   *
+   * Obsidian shows an image or a video in a leaf on every platform, so this
+   * is the one route into the file that works on a phone as well as a desk.
+   */
+  private openFile(path: string): void {
+    const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+    if (!(file instanceof TFile)) {
+      new Notice("Oriko: that file is no longer in the vault");
+      return;
+    }
+    void this.app.workspace.getLeaf(false).openFile(file);
+  }
+
   private revealFirstFile(id: string): void {
     const file = this.filesFor(id)[0];
     if (!file) {
@@ -1028,7 +1050,19 @@ export class OrikoView extends ItemView {
     }
   }
 
+  /**
+   * Saves a copy of everything archived for these clippings out of Obsidian.
+   *
+   * Two destinations, because the platforms have two different ideas of where
+   * a saved file goes: ~/Downloads on a desktop, and on a phone wherever the
+   * share sheet is pointed, which is the user's call and not ours to make.
+   */
   async exportToDownloads(ids: string[]): Promise<void> {
+    if (!systemAvailable()) {
+      await this.shareToDevice(ids);
+      return;
+    }
+
     let copied = 0;
     for (const id of ids) {
       for (const file of this.filesFor(id)) {
@@ -1043,6 +1077,50 @@ export class OrikoView extends ItemView {
         ? "Oriko: nothing archived to export yet"
         : `Oriko: exported ${copied} file${copied === 1 ? "" : "s"} to Downloads`
     );
+  }
+
+  /**
+   * The mobile half: the bytes go to the system share sheet, and iOS offers
+   * Save Image or Save to Files alongside everything else that accepts a
+   * picture.
+   *
+   * Read through the vault rather than off disk, since there is no disk path
+   * to read from here. That means the file is in memory for as long as the
+   * sheet is up, which is why nothing is read until the host has said it can
+   * share at all.
+   */
+  private async shareToDevice(ids: string[]): Promise<void> {
+    if (!canShareFiles(navigator)) {
+      new Notice(shareNotice("unsupported") ?? "");
+      return;
+    }
+
+    const items: ShareItem[] = [];
+    for (const id of ids) {
+      for (const path of this.filesFor(id)) {
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+        if (!(file instanceof TFile)) continue;
+        try {
+          items.push({
+            name: file.name,
+            mime: mimeForPath(file.name),
+            data: await this.app.vault.readBinary(file),
+          });
+        } catch {
+          // One unreadable file does not cost the others their sheet.
+        }
+      }
+    }
+
+    const outcome = await shareFiles(
+      {
+        host: navigator,
+        makeFile: (data, name, mime) => new File([data], name, { type: mime }),
+      },
+      items
+    );
+    const notice = shareNotice(outcome);
+    if (notice) new Notice(notice);
   }
 
   private confirmDelete(ids: string[]): void {
@@ -1516,6 +1594,7 @@ export class OrikoView extends ItemView {
       facets: facetsOf(this.facets, defs),
       filter: this.activeFilter(),
       hasSystem: systemAvailable(),
+      canExport: systemAvailable() || canShareFiles(navigator),
       // Every row runs the method its context-menu equivalent runs. The two
       // surfaces list different things; neither reimplements the work.
       actions: {

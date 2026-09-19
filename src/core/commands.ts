@@ -109,6 +109,14 @@ export interface PaletteContext {
   filter: FilterState;
   /** False off desktop, where there is no Finder and no Downloads folder. */
   hasSystem: boolean;
+  /**
+   * Whether a copy can be saved out of Obsidian at all: into ~/Downloads on
+   * desktop, through the share sheet on a phone. Kept apart from hasSystem
+   * because mobile can do that one and not the other, and folding them back
+   * together would take the export row away from the platform that now has
+   * somewhere to put it.
+   */
+  canExport: boolean;
   actions: PaletteActions;
 }
 
@@ -166,28 +174,29 @@ function selectionCommands(context: PaletteContext): PaletteCommand[] {
     });
   }
 
-  if (context.hasSystem) {
+  if (context.canExport) {
     items.push({
       id: "selection:export",
-      label: "Export to Downloads",
+      label: context.hasSystem ? "Export to Downloads" : "Save to device",
       icon: "download",
       section: "Actions",
       detail: one ? "⌘E" : count,
-      keywords: "save copy download file",
+      keywords: "save copy download file share",
       run: () => actions.exportSelection(selection),
     });
+  }
 
-    // Revealing picks one file, so a selection of many has no single answer.
-    if (one) {
-      items.push({
-        id: "selection:reveal",
-        label: "Reveal in Finder",
-        icon: "folder",
-        section: "Actions",
-        keywords: "finder show file folder disk",
-        run: () => actions.reveal(selection[0]),
-      });
-    }
+  // Revealing picks one file, so a selection of many has no single answer,
+  // and there is no file manager behind a phone to reveal it in either.
+  if (context.hasSystem && one) {
+    items.push({
+      id: "selection:reveal",
+      label: "Reveal in Finder",
+      icon: "folder",
+      section: "Actions",
+      keywords: "finder show file folder disk",
+      run: () => actions.reveal(selection[0]),
+    });
   }
 
   // Moving to the grid you are already in does nothing, and every selected

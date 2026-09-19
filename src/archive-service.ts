@@ -12,7 +12,7 @@ import {
   ytdlpPath,
 } from "./convert";
 import { posterPath, previewPath, renderPoster, renderThumbnail, thumbPath } from "./core/derive";
-import { extensionOf, needsPreview } from "./core/formats";
+import { extensionOf, mimeForPath, needsPreview } from "./core/formats";
 import { ClippingIndex } from "./index-store";
 import { hashUrl } from "./core/hash";
 import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./core/normalize";
@@ -116,23 +116,6 @@ export class ArchiveService {
     };
   }
 
-  private static mimeFor(path: string): string {
-    const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-    const map: Record<string, string> = {
-      mp4: "video/mp4",
-      webm: "video/webm",
-      mov: "video/quicktime",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      png: "image/png",
-      gif: "image/gif",
-      webp: "image/webp",
-      avif: "image/avif",
-      svg: "image/svg+xml",
-    };
-    return map[ext] ?? "application/octet-stream";
-  }
-
   /**
    * Loads an archived file as a blob: URL rather than an app:// resource
    * URL. app:// is cross-origin to the page, which taints the canvas and
@@ -142,7 +125,7 @@ export class ArchiveService {
     const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
     if (!(file instanceof TFile)) return null;
     const data = await this.app.vault.readBinary(file);
-    const url = URL.createObjectURL(new Blob([data], { type: ArchiveService.mimeFor(path) }));
+    const url = URL.createObjectURL(new Blob([data], { type: mimeForPath(path) }));
     return { url, revoke: () => URL.revokeObjectURL(url) };
   }
 

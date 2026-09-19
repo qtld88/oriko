@@ -1357,6 +1357,33 @@
   text-decoration: underline;
 }
 
+/* The filename row's way into the file it names. A button rather than an
+   anchor, since it has no href to offer and the keyboard and screen reader
+   should be told it does something; stripped back to the source link beside
+   it so the panel still reads as a description and not a row of controls.
+   Obsidian's own button styling is what is being undone here. */
+.pg-detail button.pg-detail-link {
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  background-image: none;
+  box-shadow: none;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.pg-detail button.pg-detail-link:hover {
+  background: none;
+  background-image: none;
+  box-shadow: none;
+}
+
 /* The picture's palette, last in the details panel so it reads as another
    field rather than a widget bolted on underneath. */
 .pg-swatches {

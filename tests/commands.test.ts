@@ -48,6 +48,7 @@ function context(over: Partial<PaletteContext> = {}): PaletteContext {
     facets: { categories: [], status: [], kind: [], domain: [] },
     filter: emptyFilter(),
     hasSystem: true,
+    canExport: true,
     actions,
     ...over,
   };
@@ -82,9 +83,16 @@ describe("buildCommands", () => {
   });
 
   it("drops the Finder and Downloads actions when the platform has neither", () => {
-    const list = ids(context({ selection: ["a.md"], hasSystem: false }));
+    const list = ids(context({ selection: ["a.md"], hasSystem: false, canExport: false }));
     expect(list).not.toContain("selection:export");
     expect(list).not.toContain("selection:reveal");
+  });
+
+  it("keeps saving a copy on a phone, which has a share sheet but no Finder", () => {
+    const ctx = context({ selection: ["a.md"], hasSystem: false, canExport: true });
+    expect(ids(ctx)).toContain("selection:export");
+    expect(ids(ctx)).not.toContain("selection:reveal");
+    expect(find(ctx, "selection:export")?.label).toBe("Save to device");
   });
 
   it("marks deletion destructive", () => {
