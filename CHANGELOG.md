@@ -5,6 +5,11 @@ All notable changes to Oriko will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.64] - 2026-09-19
+
+### Fixed
+- **Saving a video no longer hands you two files.** Every clipping with a video was giving you the video plus a second copy of it, or the reel's cover picture, both of which Oriko had quietly archived alongside it. You now get the video on its own, whether you save it to your phone, export it to Downloads or reveal it.
+
 ## [0.1.63] - 2026-09-19
 
 ### Fixed

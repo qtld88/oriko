@@ -1,7 +1,6 @@
 import { ORIKO_ICON_ID } from "./core/icon";
 import { ItemView, Notice, Platform, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
 import { absolutePath, vaultOnDisk } from "./convert";
-import { dedupeMedia, sourceVideoKeyFor } from "./core/normalize";
 import { copyToDownloads, revealInFinder, systemAvailable } from "./core/system";
 import { canShareFiles, shareFiles, shareNotice } from "./core/share";
 import type { ShareItem } from "./core/share";
@@ -68,7 +67,7 @@ import { PENDING_RETRY_MS, PendingSources } from "./core/pending";
 import { SpaceBar } from "./space-bar";
 import { STAGES, expandStage, shrinkStage, stageLabel } from "./core/density";
 import type { DensityStage } from "./core/density";
-import { describeFiles } from "./core/media-refs";
+import { describeFiles, savableFiles } from "./core/media-refs";
 import { orphansAfterDeleting, removeMedia } from "./sweep";
 import {
   effectiveGrid,
@@ -812,30 +811,11 @@ export class OrikoView extends ItemView {
     this.grid = null;
   }
 
-  /** Every archived file belonging to a clipping, originals only. */
+  /** What Export, Reveal and Save to device hand over for a clipping. */
   private filesFor(id: string): string[] {
     const record = this.plugin.index.get(id);
     if (!record) return [];
-
-    const cache = this.plugin.archiver.cache;
-    const paths: string[] = [];
-
-    if (record.source) {
-      const video = cache.get(sourceVideoKeyFor(record.source));
-      if (video?.file) paths.push(video.file);
-    }
-    // Looked up through the same dedupe the archiver used, so the keys
-    // match; comparing a raw URL against a normalized key would not.
-    for (const media of dedupeMedia(record.media)) {
-      // An embedded vault file is its own archive.
-      if (!/^https?:\/\//i.test(media.url)) {
-        paths.push(media.url);
-        continue;
-      }
-      const entry = cache.get(media.key);
-      if (entry?.file) paths.push(entry.file);
-    }
-    return [...new Set(paths)];
+    return savableFiles(record, this.plugin.archiver.cache);
   }
 
   /**
