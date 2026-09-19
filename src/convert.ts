@@ -124,6 +124,19 @@ export function absolutePath(vault: Vault, relative: string): string | null {
   return adapter.getFullPath(relative);
 }
 
+/**
+ * Whether the vault sits on a filesystem a path can be handed to.
+ *
+ * The other half of the desktop test, and the decisive one: mobile's adapter
+ * is a CapacitorAdapter, so absolutePath there returns null whatever the node
+ * shim claims about itself. Anything that ends in a real path - Finder,
+ * copying into Downloads - asks this as well as systemAvailable, so the
+ * controls are hidden rather than shown and then failing on the path.
+ */
+export function vaultOnDisk(vault: Vault): boolean {
+  return vault.adapter instanceof FileSystemAdapter;
+}
+
 function run(command: string, args: string[]): Promise<boolean> {
   const cp = nodeRequire("child_process") as ChildProcessModule | null;
   if (!cp) return Promise.resolve(false);

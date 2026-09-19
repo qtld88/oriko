@@ -1,6 +1,6 @@
 import { ORIKO_ICON_ID } from "./core/icon";
 import { ItemView, Notice, Platform, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
-import { absolutePath } from "./convert";
+import { absolutePath, vaultOnDisk } from "./convert";
 import { dedupeMedia, sourceVideoKeyFor } from "./core/normalize";
 import { copyToDownloads, revealInFinder, systemAvailable } from "./core/system";
 import { canShareFiles, shareFiles, shareNotice } from "./core/share";
@@ -909,10 +909,10 @@ export class OrikoView extends ItemView {
 
     // Desktop copies into ~/Downloads; mobile hands the file to the share
     // sheet. Same row, same method behind it, and the label says which.
-    if (systemAvailable() || canShareFiles(navigator)) {
+    if (this.onDisk() || canShareFiles(navigator)) {
       reach.push({
         icon: "download",
-        label: systemAvailable() ? "Export to Downloads" : "Save to device",
+        label: this.onDisk() ? "Export to Downloads" : "Save to device",
         detail: "⌘E",
         onSelect: () => void this.exportToDownloads(ids),
       });
@@ -922,8 +922,8 @@ export class OrikoView extends ItemView {
     // Finder on a desktop, a tab on a phone, and the label says which.
     if (n === 1) {
       reach.push({
-        icon: systemAvailable() ? "folder" : "file",
-        label: systemAvailable() ? "Reveal in Finder" : "Open file",
+        icon: this.onDisk() ? "folder" : "file",
+        label: this.onDisk() ? "Reveal in Finder" : "Open file",
         onSelect: () => this.revealFirstFile(ids[0]),
       });
     }
@@ -1024,6 +1024,16 @@ export class OrikoView extends ItemView {
   }
 
   /**
+   * Whether this host can be handed a real path, which is what Finder and the
+   * copy into Downloads both come down to. Both halves are asked: mobile's
+   * node shim answers for "fs" without throwing, so the module alone is not
+   * evidence, and the vault adapter is.
+   */
+  private onDisk(): boolean {
+    return systemAvailable() && vaultOnDisk(this.app.vault);
+  }
+
+  /**
    * Shows the archived file itself.
    *
    * Desktop hands it to Finder. A phone has no file manager to hand it to, so
@@ -1039,7 +1049,7 @@ export class OrikoView extends ItemView {
       return;
     }
 
-    if (!systemAvailable()) {
+    if (!this.onDisk()) {
       const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
       if (!(file instanceof TFile)) {
         new Notice("Oriko: that file is no longer in the vault");
@@ -1063,7 +1073,7 @@ export class OrikoView extends ItemView {
    * share sheet is pointed, which is the user's call and not ours to make.
    */
   async exportToDownloads(ids: string[]): Promise<void> {
-    if (!systemAvailable()) {
+    if (!this.onDisk()) {
       await this.shareToDevice(ids);
       return;
     }
@@ -1598,8 +1608,8 @@ export class OrikoView extends ItemView {
       facetDefs: defs,
       facets: facetsOf(this.facets, defs),
       filter: this.activeFilter(),
-      hasSystem: systemAvailable(),
-      canExport: systemAvailable() || canShareFiles(navigator),
+      hasSystem: this.onDisk(),
+      canExport: this.onDisk() || canShareFiles(navigator),
       // Every row runs the method its context-menu equivalent runs. The two
       // surfaces list different things; neither reimplements the work.
       actions: {

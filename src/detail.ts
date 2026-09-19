@@ -9,7 +9,7 @@ import {
   zoomAt,
 } from "./core/camera";
 import type { PinchStart, Point } from "./core/camera";
-import { resourceUrl } from "./convert";
+import { resourceUrl, vaultOnDisk } from "./convert";
 import type { Camera, Size } from "./core/camera";
 import { facetLabel } from "./core/filter";
 import { flightMidpoint, flipTransform } from "./core/layout";
@@ -216,6 +216,16 @@ export class DetailView {
 
   private resource(path: string): string {
     return resourceUrl(this.app.vault, path) || path;
+  }
+
+  /**
+   * Whether this host can be handed a real path, which is what Finder and the
+   * copy into Downloads both come down to. Both halves are asked: mobile's
+   * node shim answers for "fs" without throwing, so the module alone is not
+   * evidence, and the vault adapter is.
+   */
+  private onDisk(): boolean {
+    return systemAvailable() && vaultOnDisk(this.app.vault);
   }
 
   /** Fires once the stage exists, so the source card can be hidden then. */
@@ -696,10 +706,10 @@ export class DetailView {
     // Still gated, because a host with neither is a control that cannot work:
     // Export used to answer a tap on a phone by claiming nothing had been
     // archived, when the truth was there was nowhere to put it.
-    if (systemAvailable() || canShareFiles(navigator)) {
+    if (this.onDisk() || canShareFiles(navigator)) {
       add(
         "download",
-        systemAvailable() ? "Export to Downloads" : "Save to device",
+        this.onDisk() ? "Export to Downloads" : "Save to device",
         "\u2318E",
         (event) => mod(event) && !event.shiftKey && event.key.toLowerCase() === "e",
         () => this.actions.onExport(model.id)
@@ -711,15 +721,15 @@ export class DetailView {
     // is opening it in a tab. No longer gated: there is now something for it
     // to do on both.
     add(
-      systemAvailable() ? "folder" : "file",
-      systemAvailable() ? "Reveal in Finder" : "Open file",
+      this.onDisk() ? "folder" : "file",
+      this.onDisk() ? "Reveal in Finder" : "Open file",
       "\u2318\u21e7R",
       (event) => mod(event) && event.shiftKey && event.key.toLowerCase() === "r",
       () => {
         // The mobile half opens a leaf, which would arrive behind this
         // overlay, so it closes first the way Open note does. Finder needs
         // no such thing: it comes up in front of Obsidian on its own.
-        if (!systemAvailable()) this.close();
+        if (!this.onDisk()) this.close();
         this.actions.onReveal(model.id);
       }
     );

@@ -5,6 +5,11 @@ All notable changes to Oriko will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.63] - 2026-09-19
+
+### Fixed
+- **Save to device and Open file now turn up on a phone.** Oriko was quietly deciding your phone was a desktop, so you got Export to Downloads and Reveal in Finder instead, and tapping either gave you a note about the file when the truth was there is no Downloads folder or Finder to send it to.
+
 ## [0.1.62] - 2026-09-19
 
 ### Added
