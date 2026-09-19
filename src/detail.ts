@@ -30,12 +30,6 @@ export interface DetailActions {
   onDelete: (id: string) => void;
   onOpenNote: (id: string) => void;
   /**
-   * Opens one archived file, by its vault path, in a tab. Takes a path rather
-   * than a clipping id because the panel is describing one picture and the
-   * clipping may have several; the id would lose which one was asked for.
-   */
-  onOpenFile: (path: string) => void;
-  /**
    * Opens the property rows, anchored at the button that asked. The view owns
    * the menu and the single writer behind it, so this passes the request on
    * rather than editing anything here: the licence to write a note the plugin
@@ -581,26 +575,7 @@ export class DetailView {
     if (model.width > 4 && model.height > 3) {
       field("Resolution", `${model.width} × ${model.height}`);
     }
-    // The row names a file sitting in the vault, so it opens it. Plain text
-    // while the tile is still showing the origin server's copy: there is no
-    // local file yet, and a control that answers a tap with an apology is
-    // worse than a label.
-    const fileName = model.filePath.slice(model.filePath.lastIndexOf("/") + 1);
-    if (fileName && !model.remote) {
-      const block = panel.createDiv({ cls: "pg-detail-field" });
-      block.createDiv({ cls: "pg-detail-label", text: "Filename" });
-      const value = block.createDiv({ cls: "pg-detail-value" });
-      const open = value.createEl("button", { cls: "pg-detail-link", text: fileName });
-      open.onclick = (event: MouseEvent) => {
-        event.stopPropagation();
-        // Closed first, the way Open note is: the file arrives in a leaf
-        // behind the overlay, which would otherwise sit over it.
-        this.close();
-        this.actions.onOpenFile(model.filePath);
-      };
-    } else {
-      field("Filename", fileName);
-    }
+    field("Filename", model.filePath.slice(model.filePath.lastIndexOf("/") + 1));
     // The whole address, as a link out to the page. It was shown as the
     // domain with the URL on hover, and the hover is not there on a phone;
     // the value wraps anywhere, so a long one costs lines, not clipping.
@@ -730,17 +705,24 @@ export class DetailView {
         () => this.actions.onExport(model.id)
       );
     }
-    // No mobile counterpart: there is no file manager behind the app to
-    // reveal anything in.
-    if (systemAvailable()) {
-      add(
-        "folder",
-        "Reveal in Finder",
-        "\u2318\u21e7R",
-        (event) => mod(event) && event.shiftKey && event.key.toLowerCase() === "r",
-        () => this.actions.onReveal(model.id)
-      );
-    }
+    // Getting to the file itself, which means two different things again.
+    // Desktop hands it to Finder. A phone has no file manager behind the app
+    // to hand it to, so the nearest thing that is still "here is the file"
+    // is opening it in a tab. No longer gated: there is now something for it
+    // to do on both.
+    add(
+      systemAvailable() ? "folder" : "file",
+      systemAvailable() ? "Reveal in Finder" : "Open file",
+      "\u2318\u21e7R",
+      (event) => mod(event) && event.shiftKey && event.key.toLowerCase() === "r",
+      () => {
+        // The mobile half opens a leaf, which would arrive behind this
+        // overlay, so it closes first the way Open note does. Finder needs
+        // no such thing: it comes up in front of Obsidian on its own.
+        if (!systemAvailable()) this.close();
+        this.actions.onReveal(model.id);
+      }
+    );
 
     rule();
 

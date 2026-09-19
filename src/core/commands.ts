@@ -186,15 +186,16 @@ function selectionCommands(context: PaletteContext): PaletteCommand[] {
     });
   }
 
-  // Revealing picks one file, so a selection of many has no single answer,
-  // and there is no file manager behind a phone to reveal it in either.
-  if (context.hasSystem && one) {
+  // Revealing picks one file, so a selection of many has no single answer.
+  // Finder on a desktop, a tab on a phone, which has no file manager behind
+  // it to reveal anything in.
+  if (one) {
     items.push({
       id: "selection:reveal",
-      label: "Reveal in Finder",
-      icon: "folder",
+      label: context.hasSystem ? "Reveal in Finder" : "Open file",
+      icon: context.hasSystem ? "folder" : "file",
       section: "Actions",
-      keywords: "finder show file folder disk",
+      keywords: "finder show file folder disk open",
       run: () => actions.reveal(selection[0]),
     });
   }

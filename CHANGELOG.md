@@ -5,6 +5,12 @@ All notable changes to Oriko will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.62] - 2026-09-19
+
+### Added
+- **You can now save a clipping's picture or video to your phone.** Open a clipping and tap Save to device, and iOS offers Save Image, Save to Files, or anywhere else you'd send a photo. On a desktop that button is still Export to Downloads and still lands in your Downloads folder.
+- **You can now open a clipping's archived picture or video on your phone.** There's no Finder to reveal it in, so Reveal in Finder is called Open file there and opens the file in its own tab. Both sit in the clipping's bar, the tile's menu and the command palette, same as on a desktop.
+
 ## [0.1.61] - 2026-09-17
 
 ### Added

@@ -412,7 +412,6 @@ export class OrikoView extends ItemView {
       onReveal: (id) => this.revealFirstFile(id),
       onDelete: (id) => this.confirmDelete([id]),
       onOpenNote: (id) => this.openNote(id),
-      onOpenFile: (path) => this.openFile(path),
       onEditProperties: (id, x, y) => this.editProperties([id], x, y),
       isMenuOpen: () => this.menu?.isOpen ?? false,
     }, () => this.look().filterProperties);
@@ -919,10 +918,12 @@ export class OrikoView extends ItemView {
       });
     }
 
-    if (systemAvailable() && n === 1) {
+    // Revealing picks one file, so a selection of many has no single answer.
+    // Finder on a desktop, a tab on a phone, and the label says which.
+    if (n === 1) {
       reach.push({
-        icon: "folder",
-        label: "Reveal in Finder",
+        icon: systemAvailable() ? "folder" : "file",
+        label: systemAvailable() ? "Reveal in Finder" : "Open file",
         onSelect: () => this.revealFirstFile(ids[0]),
       });
     }
@@ -1023,28 +1024,32 @@ export class OrikoView extends ItemView {
   }
 
   /**
-   * Opens one archived file in a tab, which is what the detail panel's
-   * Filename row asks for.
+   * Shows the archived file itself.
    *
-   * Obsidian shows an image or a video in a leaf on every platform, so this
-   * is the one route into the file that works on a phone as well as a desk.
+   * Desktop hands it to Finder. A phone has no file manager to hand it to, so
+   * it opens the file in a tab instead, which is the nearest thing to the
+   * same answer: here is the file this clipping is made of. Obsidian shows an
+   * image or a video in a leaf on every platform, so that route needs nothing
+   * the host may not have.
    */
-  private openFile(path: string): void {
-    const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-    if (!(file instanceof TFile)) {
-      new Notice("Oriko: that file is no longer in the vault");
-      return;
-    }
-    void this.app.workspace.getLeaf(false).openFile(file);
-  }
-
   private revealFirstFile(id: string): void {
-    const file = this.filesFor(id)[0];
-    if (!file) {
+    const path = this.filesFor(id)[0];
+    if (!path) {
       new Notice("Oriko: nothing archived for this clipping yet");
       return;
     }
-    const absolute = absolutePath(this.app.vault, normalizePath(file));
+
+    if (!systemAvailable()) {
+      const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+      if (!(file instanceof TFile)) {
+        new Notice("Oriko: that file is no longer in the vault");
+        return;
+      }
+      void this.app.workspace.getLeaf(false).openFile(file);
+      return;
+    }
+
+    const absolute = absolutePath(this.app.vault, normalizePath(path));
     if (!absolute || !revealInFinder(absolute)) {
       new Notice("Oriko: could not reveal the file");
     }

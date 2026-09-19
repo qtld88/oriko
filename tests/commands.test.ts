@@ -82,17 +82,21 @@ describe("buildCommands", () => {
     expect(ids(context({ selection: ["a.md", "b.md"] }))).not.toContain("selection:reveal");
   });
 
-  it("drops the Finder and Downloads actions when the platform has neither", () => {
+  it("drops Export where there is nowhere at all to put a copy", () => {
     const list = ids(context({ selection: ["a.md"], hasSystem: false, canExport: false }));
     expect(list).not.toContain("selection:export");
-    expect(list).not.toContain("selection:reveal");
   });
 
-  it("keeps saving a copy on a phone, which has a share sheet but no Finder", () => {
+  it("keeps saving a copy on a phone, which has a share sheet but no Downloads", () => {
     const ctx = context({ selection: ["a.md"], hasSystem: false, canExport: true });
     expect(ids(ctx)).toContain("selection:export");
-    expect(ids(ctx)).not.toContain("selection:reveal");
     expect(find(ctx, "selection:export")?.label).toBe("Save to device");
+  });
+
+  it("offers a tab in place of Finder where there is no file manager", () => {
+    const ctx = context({ selection: ["a.md"], hasSystem: false, canExport: true });
+    expect(ids(ctx)).toContain("selection:reveal");
+    expect(find(ctx, "selection:reveal")?.label).toBe("Open file");
   });
 
   it("marks deletion destructive", () => {
