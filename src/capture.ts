@@ -42,6 +42,13 @@ import { scanAvailable, scanPage } from "./page-scanner";
  */
 const USER_AGENT = "Mozilla/5.0 (compatible; Oriko/0.1; Obsidian link preview)";
 
+/**
+ * How long the clip notice stays. Long enough to read three short lines and
+ * reach the click that opens the note, short enough that a run of clips does
+ * not bury the workspace.
+ */
+const CLIP_NOTICE_MS = 5000;
+
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
 /** Filename-safe stamp, unique to the second so two pastes cannot collide. */
@@ -468,9 +475,11 @@ export class CaptureService {
    * indistinguishable from one that silently failed.
    *
    * The notice is then the only handle on the note, so it opens it when
-   * clicked and stays until it is: the clip landed behind another app's
-   * window, and a notice that fades after five seconds is long gone by the
-   * time anyone looks at Obsidian again.
+   * clicked. It still fades: a clip shared from a browser lands behind that
+   * browser's window, and the alternative to fading is a stack of notices
+   * waiting in Obsidian for someone who clipped ten things and read none of
+   * them. The note is in the vault either way; the notice is a shortcut to
+   * it, not the record of it.
    */
   private finished(
     label: string,
@@ -491,7 +500,7 @@ export class CaptureService {
       if (line) el.createDiv({ cls: "oriko-clip-notice-sorted", text: line });
       el.createDiv({ cls: "oriko-clip-notice-hint", text: "Click to open the note" });
     });
-    const notice = new Notice(message, 0);
+    const notice = new Notice(message, CLIP_NOTICE_MS);
     notice.containerEl.addClass("oriko-clip-notice");
     notice.containerEl.addEventListener("click", () => {
       const file = this.app.vault.getAbstractFileByPath(path);
