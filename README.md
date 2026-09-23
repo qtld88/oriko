@@ -42,6 +42,10 @@ Paste a link anywhere on the wall, or run **Clip from clipboard** from the comma
 
 On iOS you can clip straight from any app's share sheet with the **[Clip to Oriko Shortcut](https://www.icloud.com/shortcuts/191427deda394d21a3f5c647b436c085)**. Sharing a post to it opens the wall and clips it, no copy and paste involved. To build it yourself: receive URLs and text from the share sheet, run **Get URLs from Input**, URL-encode the result, and open `obsidian://oriko?url=` followed by the encoded text.
 
+On a Mac the same Shortcut can clip from the clipboard instead, which is what makes it work from any browser: the share sheet is offered by Safari and by little else, so Firefox and Chrome need a route that does not depend on it. Build it with **Get Clipboard**, **Get URLs from Input**, **URL Encode**, and **Open URLs** on `obsidian://oriko?url=` followed by the encoded text. Give it a key in the Shortcuts app, under the shortcut's own details, and clipping becomes one keystroke from wherever you are reading.
+
+Anything that can open a url can clip. `obsidian://oriko?url=<percent-encoded page url>` is the whole contract, and [`contrib/clip-to-oriko.sh`](contrib/clip-to-oriko.sh) is a ready-made shell version of it for the launcher you already keep a key bound to — [Hammerspoon](https://www.hammerspoon.org/), [skhd](https://github.com/koekeishiya/skhd) and [Karabiner-Elements](https://karabiner-elements.pqrs.org/) are free and open source; Raycast and Alfred work too. Obsidian stays in the background either way, so the clip does not interrupt what you were reading.
+
 ## The Wall
 
 Every clipping is a tile: pan and pinch on a phone, scroll and zoom on a desktop, and click or tap a tile to open it full screen with its properties and actions. Videos can autoplay muted while they are in view, respecting Reduce Motion. Select many at once with a drag on desktop or a long press on mobile, then move, export or delete them together.
