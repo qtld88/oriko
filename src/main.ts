@@ -106,12 +106,20 @@ export default class OrikoPlugin extends Plugin {
         );
         return;
       }
+      const s = this.settings;
+      const grid = sharedClipGrid(s.sharedClipTarget, s.activeGrid, s.homeGridName, s.grids);
+      // A share that already knows its grid never needs the wall. On a phone
+      // the clip is the whole point, and opening the view takes over the
+      // screen you shared from; the note lands either way, and a notice says
+      // so. Only "ask" has a question to put on screen.
+      if (grid !== null) {
+        void this.capture.capture(url, grid, true);
+        return;
+      }
       // The view first, so the capture's progress bar has a wall to sit on
       // and the clipped tile has somewhere to fly in.
       void this.activateView().then((view) => {
-        const s = this.settings;
-        const grid = sharedClipGrid(s.sharedClipTarget, s.activeGrid, s.homeGridName, s.grids);
-        if (grid !== null || !view) return this.capture.capture(url, grid ?? undefined);
+        if (!view) return this.capture.capture(url, undefined, true);
         view.pickGridAndClip(url);
       });
     };
