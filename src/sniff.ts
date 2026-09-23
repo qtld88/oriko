@@ -1,5 +1,11 @@
 import { Platform } from "obsidian";
-import { pickSniffedVideo } from "./core/resolve";
+import {
+  NO_SNIFF_PROGRESS,
+  advanceSniff,
+  pickSniffedVideo,
+  sniffGivesUp,
+} from "./core/resolve";
+import type { SniffProbe } from "./core/resolve";
 
 /**
  * Finds a post's video URL by actually loading the page, for hosts that
@@ -23,6 +29,9 @@ interface WebviewLike extends HTMLElement {
  * only hits the network once playback is attempted, then reports the
  * <video> source and every URL the page has requested so far — resource
  * timing sees the media fetch even when the element hides behind a blob.
+ *
+ * Whether a player exists at all is reported too. That is what tells a post
+ * still fetching its video from a post that never had one.
  */
 const PROBE = `(() => {
   const v = document.querySelector("video");
@@ -34,7 +43,12 @@ const PROBE = `(() => {
     } catch (e) {}
   }
   const res = performance.getEntriesByType("resource").map((e) => e.name);
-  return JSON.stringify({ src: v ? v.currentSrc || v.src || "" : "", res });
+  return JSON.stringify({
+    src: v ? v.currentSrc || v.src || "" : "",
+    res,
+    hasVideo: Boolean(v),
+    ready: document.readyState === "complete",
+  });
 })();`;
 
 const POLL_MS = 600;
@@ -61,18 +75,25 @@ export async function sniffVideoUrl(pageUrl: string, timeoutMs = 20000): Promise
         window.clearTimeout(timer);
         resolve(value);
       };
-      // The timeout is the only guaranteed exit: a page that never loads,
-      // a disabled webview tag, or a login wall all end here, never hang.
+      // The backstop, not the usual exit: a page that never loads, a
+      // disabled webview tag, or a login wall all end here, never hang. A
+      // post that simply has no video gives up long before this.
       const timer = window.setTimeout(() => finish(null), timeoutMs);
 
+      let progress = NO_SNIFF_PROGRESS;
       view.addEventListener("dom-ready", () => {
         poll = window.setInterval(() => {
           void (async () => {
             try {
               const raw = await view.executeJavaScript(PROBE);
-              const report = JSON.parse(String(raw)) as { src: string; res: string[] };
+              const report = JSON.parse(String(raw)) as SniffProbe;
               const url = pickSniffedVideo([report.src, ...report.res]);
-              if (url) finish(url);
+              if (url) return finish(url);
+              // A loaded page that keeps showing no player has no video to
+              // wait for. Without this the timeout is the only exit, and
+              // every picture post pays it in full.
+              progress = advanceSniff(progress, report);
+              if (sniffGivesUp(progress)) finish(null);
             } catch {
               // Probe landed between navigations; the next tick retries.
             }

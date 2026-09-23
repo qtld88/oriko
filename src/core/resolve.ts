@@ -218,6 +218,66 @@ export function isThreadsUrl(url: string): boolean {
   }
 }
 
+/** One reading of the sniffed page, taken every POLL_MS by sniff.ts. */
+export interface SniffProbe {
+  /** The <video> element's current source, or "" when there is none. */
+  src: string;
+  /** Every URL the page has requested so far, from resource timing. */
+  res: string[];
+  /** True while a <video> element is in the document. */
+  hasVideo: boolean;
+  /** True once document.readyState reports "complete". */
+  ready: boolean;
+}
+
+/** What the sniffer has learnt across every probe so far. */
+export interface SniffProgress {
+  /** Sticky: a player that mounted and then unmounted still counts. */
+  sawVideo: boolean;
+  /** Consecutive probes with the page loaded and no player in it. */
+  quiet: number;
+}
+
+export const NO_SNIFF_PROGRESS: SniffProgress = { sawVideo: false, quiet: 0 };
+
+/**
+ * How many quiet probes end the wait. At the 600 ms poll of sniff.ts this is
+ * three seconds past the load, which is room for a client-rendered player to
+ * mount without being the twenty-second wait it replaces.
+ */
+export const SNIFF_QUIET_POLLS = 5;
+
+/**
+ * Folds one probe into what is known. `sawVideo` only ever turns on, because
+ * a player that mounts and is then replaced during navigation is still proof
+ * the post has a video and still worth the full timeout.
+ */
+export function advanceSniff(prev: SniffProgress, probe: SniffProbe): SniffProgress {
+  const sawVideo = prev.sawVideo || probe.hasVideo;
+  return {
+    sawVideo,
+    quiet: probe.ready && !sawVideo ? prev.quiet + 1 : 0,
+  };
+}
+
+/**
+ * Whether to stop waiting and report no video.
+ *
+ * The sniffer used to have one exit: a twenty-second timeout. A post that
+ * carries a picture rather than a video reaches it every single time, and
+ * measured on a Threads image post the whole clip took 21 s, of which 20 were
+ * this wait. Nothing was wrong and nothing was going to arrive.
+ *
+ * A loaded page with no <video> element in it is the signal. It is not proof
+ * on its own — Threads renders its player client-side, after readyState is
+ * already complete — so the quiet has to hold across several probes before
+ * the wait ends. A page that does mount a player keeps the full timeout,
+ * because a video still resolving its URL is exactly what the wait is for.
+ */
+export function sniffGivesUp(progress: SniffProgress): boolean {
+  return progress.quiet >= SNIFF_QUIET_POLLS;
+}
+
 /**
  * The video URL worth downloading, out of everything a page load touched.
  *
