@@ -2,6 +2,7 @@ import type { DensityStage } from "./density";
 import type { GridLook, LookScope } from "./look";
 import type { FolderSpace } from "./folders";
 import type { GridSpace, SharedClipTarget } from "./spaces";
+import type { SortCategory, SortDestination } from "./classify";
 
 export interface OrikoSettings {
   clippingsFolder: string;
@@ -83,6 +84,28 @@ export interface OrikoSettings {
   ytdlpPath: string;
   /** Full path to ffmpeg, "" to discover it on PATH and in common installs. */
   ffmpegPath: string;
+
+  /**
+   * Auto-sorting. Every default is inert: no endpoint, no keys, switch off.
+   * Nothing leaves the vault until the user configures an engine.
+   */
+  autoSort: boolean;
+  /** Where the decided category is written besides `categories:`. */
+  sortDestination: SortDestination;
+  /** The categories the model chooses between. Empty disables sorting. */
+  sortCategories: SortCategory[];
+  /** Tags the model answers yes or no on. Empty asks for no tags. */
+  sortTags: SortCategory[];
+  /** A System One endpoint: a local Laya sidecar, or a hosted service. */
+  sortEndpoint: string;
+  /** Bearer token for `sortEndpoint`. Empty for a local sidecar. */
+  sortApiKey: string;
+  /** An OpenAI-compatible base URL, e.g. https://api.openai.com/v1 */
+  sortLlmBaseUrl: string;
+  sortLlmModel: string;
+  sortLlmApiKey: string;
+  /** The winning option's probability must reach this. Not confidence. */
+  sortThreshold: number;
 }
 
 export const DEFAULT_SETTINGS: OrikoSettings = {
@@ -108,4 +131,14 @@ export const DEFAULT_SETTINGS: OrikoSettings = {
   gridTileSizes: {},
   ytdlpPath: "",
   ffmpegPath: "",
+  autoSort: false,
+  sortDestination: "property",
+  sortCategories: [],
+  sortTags: [],
+  sortEndpoint: "",
+  sortApiKey: "",
+  sortLlmBaseUrl: "",
+  sortLlmModel: "",
+  sortLlmApiKey: "",
+  sortThreshold: 0.6,
 };
