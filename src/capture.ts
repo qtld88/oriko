@@ -11,7 +11,7 @@ import {
   verdictExtras,
   verdictSubfolder,
 } from "./core/classify";
-import type { Verdict } from "./core/classify";
+import type { SortOutcome, Verdict } from "./core/classify";
 import {
   ResolvedLink,
   amazonProduct,
@@ -51,6 +51,31 @@ function todayStamp(): string {
     `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}` +
     ` ${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`
   );
+}
+
+/**
+ * What the notice says about sorting. Silent when the feature is off: someone
+ * who never turned it on does not need to read about it on every clip.
+ *
+ * Unsure and unavailable both leave the clipping at the root, and saying which
+ * is which is the point. One is the model hedging, the other is a server that
+ * never answered, and they are fixed in different places. Declaring no
+ * categories is the commonest cause of all and the least guessable, so that
+ * one says where to go.
+ */
+function sortingLine(outcome: SortOutcome, category: string): string {
+  switch (outcome) {
+    case "sorted":
+      return `Sorted into ${category}`;
+    case "unsure":
+      return "Left unsorted: nothing was certain enough";
+    case "unavailable":
+      return "Left unsorted: no sorting endpoint answered";
+    case "no-categories":
+      return "Left unsorted: no categories set in Oriko settings";
+    default:
+      return "";
+  }
 }
 
 export class CaptureService {
@@ -228,7 +253,7 @@ export class CaptureService {
     // side costs no wall-clock time at all.
     const sorting = this.classifier
       .classify(clippingState(link.title, link.description, link.url))
-      .catch(() => NO_VERDICT);
+      .catch(() => ({ verdict: NO_VERDICT, outcome: "unavailable" as SortOutcome }));
     const archived = await this.archiver.archiveResolved(
       link.url,
       link.media,
@@ -256,8 +281,8 @@ export class CaptureService {
     }
 
     this.report(0.85, "Creating clipping…");
-    const verdict = await sorting;
-    const file = await this.createNote({ ...link, media }, undefined, grid, verdict);
+    const sorted = await sorting;
+    const file = await this.createNote({ ...link, media }, undefined, grid, sorted.verdict);
     if (!file) {
       this.onProgress?.(null);
       return;
@@ -266,7 +291,7 @@ export class CaptureService {
     // handleModify, not ingest: ingest updates the index silently, so the
     // grid was never told the clipping had landed.
     await this.index.handleModify(file);
-    this.finished(link.title.slice(0, 40), file.path);
+    this.finished(link.title.slice(0, 40), file.path, sorted.outcome, sorted.verdict.category);
   }
 
   private async resolve(url: string): Promise<ResolvedLink | null> {
@@ -445,7 +470,12 @@ export class CaptureService {
    * window, and a notice that fades after five seconds is long gone by the
    * time anyone looks at Obsidian again.
    */
-  private finished(label: string, path: string): void {
+  private finished(
+    label: string,
+    path: string,
+    outcome: SortOutcome = "off",
+    category = ""
+  ): void {
     this.onFinished?.(label, path);
     // The wall, when there is one, has already been told. A notice follows
     // only when nobody was watching Obsidian: either no wall at all, or a
@@ -455,6 +485,8 @@ export class CaptureService {
     // click, so nothing about one suggests that clicking it could do work.
     const message = createFragment((el) => {
       el.createDiv({ text: `Oriko: clipped ${label}` });
+      const line = sortingLine(outcome, category);
+      if (line) el.createDiv({ cls: "oriko-clip-notice-sorted", text: line });
       el.createDiv({ cls: "oriko-clip-notice-hint", text: "Click to open the note" });
     });
     const notice = new Notice(message, 0);

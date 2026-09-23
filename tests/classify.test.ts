@@ -86,6 +86,15 @@ describe("buildSystemOneRequest", () => {
     const body = buildSystemOneRequest("a state", CATEGORIES, tags);
     expect(body.questions["tag:diy"].instructions).toBe("This web page is about diy");
   });
+
+  it("falls back to the category name too, rather than sending an empty criterion", () => {
+    // A description is optional in the settings. Sending "" would have the
+    // model match the clipping against nothing, which is worse than matching
+    // it against the word DESIGN.
+    const bare: SortCategory[] = [{ name: "DESIGN", description: "" }];
+    const body = buildSystemOneRequest("a state", bare, []);
+    expect(body.questions.category.criteria).toEqual({ DESIGN: "DESIGN" });
+  });
 });
 
 function answer(probabilities: Record<string, number>, confidence = 0.9): unknown {
@@ -189,6 +198,13 @@ describe("buildLlmMessages", () => {
     const body = buildLlmMessages("a state", CATEGORIES, "gpt-4o-mini");
     expect(body.model).toBe("gpt-4o-mini");
     expect(body.response_format).toEqual({ type: "json_object" });
+  });
+
+  it("lists a description-less category as a bare name, with no dangling colon", () => {
+    const bare: SortCategory[] = [{ name: "DESIGN", description: "" }];
+    const prompt = buildLlmMessages("a state", bare, "m").messages[0].content;
+    expect(prompt).toContain("- DESIGN\n");
+    expect(prompt).not.toContain("- DESIGN:");
   });
 
   it("puts the state in the user message, not the system one", () => {

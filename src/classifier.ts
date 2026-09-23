@@ -7,7 +7,7 @@ import {
   readSystemOneResponse,
   usableCategories,
 } from "./core/classify";
-import type { SortCategory, Verdict } from "./core/classify";
+import type { Classification, SortCategory, Verdict } from "./core/classify";
 import type { OrikoSettings } from "./core/settings";
 
 /**
@@ -38,6 +38,15 @@ function withTimeout<T>(work: Promise<T>, fallback: T, ms: number): Promise<T> {
   ]);
 }
 
+/** What one engine came back with, and whether it answered at all. */
+interface EngineResult {
+  verdict: Verdict;
+  /** True when the server replied with a usable status, whatever it decided. */
+  reached: boolean;
+}
+
+const UNREACHED: EngineResult = { verdict: NO_VERDICT, reached: false };
+
 function mergeTags(first: readonly string[], second: readonly string[]): string[] {
   const out = [...first];
   for (const tag of second) if (!out.includes(tag)) out.push(tag);
@@ -53,47 +62,61 @@ export class Classifier {
    * that never replied come out the same way here, which is what makes a local
    * sidecar usable from a phone that cannot reach it.
    */
-  async classify(state: string): Promise<Verdict> {
+  async classify(state: string): Promise<Classification> {
     const s = this.settings();
-    if (!s.autoSort) return NO_VERDICT;
+    if (!s.autoSort) return { verdict: NO_VERDICT, outcome: "off" };
 
     const categories = usableCategories(s.sortCategories);
-    // No categories means no question worth asking. Silent on purpose: the
-    // list's own empty state in the settings pane is where someone can act on
-    // it, and a notice on every clip would be noise.
-    if (categories.length === 0) return NO_VERDICT;
+    // Declaring nothing is the commonest reason a clipping comes back
+    // unsorted, and the least guessable. It gets an outcome of its own so the
+    // notice can say what to do about it.
+    if (categories.length === 0) return { verdict: NO_VERDICT, outcome: "no-categories" };
     const tags = usableCategories(s.sortTags);
 
     const hasLlm = Boolean(s.sortLlmBaseUrl && s.sortLlmModel);
+    if (!s.sortEndpoint && !hasLlm) {
+      return { verdict: NO_VERDICT, outcome: "unavailable" };
+    }
+
+    let reached = false;
+    let carried: Verdict = NO_VERDICT;
 
     if (s.sortEndpoint) {
       const first = await withTimeout(
         this.askSystemOne(state, categories, tags),
-        NO_VERDICT,
+        UNREACHED,
         SYSTEM_ONE_TIMEOUT_MS
       );
-      if (first.category || !hasLlm) return first;
-      // Tags survive a refused category: the typed engine may have answered
-      // the yes-or-no questions well while being unsure of the category.
-      const second = await withTimeout(
-        this.askLlm(state, categories),
-        NO_VERDICT,
-        LLM_TIMEOUT_MS
-      );
-      if (!second.category) return first;
-      return { ...second, tags: mergeTags(first.tags, second.tags) };
+      reached = first.reached;
+      carried = first.verdict;
+      if (first.verdict.category) return { verdict: first.verdict, outcome: "sorted" };
     }
 
-    if (hasLlm) return withTimeout(this.askLlm(state, categories), NO_VERDICT, LLM_TIMEOUT_MS);
+    if (hasLlm) {
+      const second = await withTimeout(
+        this.askLlm(state, categories),
+        UNREACHED,
+        LLM_TIMEOUT_MS
+      );
+      reached = reached || second.reached;
+      if (second.verdict.category) {
+        // Tags survive a refused category: the typed engine may have answered
+        // the yes-or-no questions well while being unsure of the category.
+        return {
+          verdict: { ...second.verdict, tags: mergeTags(carried.tags, second.verdict.tags) },
+          outcome: "sorted",
+        };
+      }
+    }
 
-    return NO_VERDICT;
+    return { verdict: carried, outcome: reached ? "unsure" : "unavailable" };
   }
 
   private async askSystemOne(
     state: string,
     categories: readonly SortCategory[],
     tags: readonly SortCategory[]
-  ): Promise<Verdict> {
+  ): Promise<EngineResult> {
     const s = this.settings();
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     // A local sidecar wants no bearer token, and sending an empty one makes
@@ -107,14 +130,17 @@ export class Classifier {
       body: JSON.stringify(buildSystemOneRequest(state, categories, tags)),
       throw: false,
     });
-    if (response.status < 200 || response.status >= 300) return NO_VERDICT;
-    return readSystemOneResponse(response.json, categories, tags, s.sortThreshold);
+    if (response.status < 200 || response.status >= 300) return UNREACHED;
+    return {
+      verdict: readSystemOneResponse(response.json, categories, tags, s.sortThreshold),
+      reached: true,
+    };
   }
 
   private async askLlm(
     state: string,
     categories: readonly SortCategory[]
-  ): Promise<Verdict> {
+  ): Promise<EngineResult> {
     const s = this.settings();
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (s.sortLlmApiKey) headers.Authorization = `Bearer ${s.sortLlmApiKey}`;
@@ -127,9 +153,12 @@ export class Classifier {
       body: JSON.stringify(buildLlmMessages(state, categories, s.sortLlmModel)),
       throw: false,
     });
-    if (response.status < 200 || response.status >= 300) return NO_VERDICT;
+    if (response.status < 200 || response.status >= 300) return UNREACHED;
 
     const body = response.json as { choices?: { message?: { content?: string } }[] };
-    return readLlmResponse(body?.choices?.[0]?.message?.content ?? "", categories);
+    return {
+      verdict: readLlmResponse(body?.choices?.[0]?.message?.content ?? "", categories),
+      reached: true,
+    };
   }
 }

@@ -2640,3 +2640,10 @@ body.is-mobile .pg-spacebar button:active {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
+
+/* The sorting verdict, under the line naming the clip. */
+.oriko-clip-notice-sorted {
+  margin-top: 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-accent);
+}
