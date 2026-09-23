@@ -73,6 +73,8 @@ function sortingLine(outcome: SortOutcome, category: string): string {
       return "Left unsorted: no sorting endpoint answered";
     case "no-categories":
       return "Left unsorted: no categories set in Oriko settings";
+    case "no-text":
+      return "Left unsorted: the page carries no text to read";
     default:
       return "";
   }
