@@ -2642,7 +2642,7 @@ body.is-mobile .pg-spacebar button:active {
 }
 
 /* The sorting verdict, under the line naming the clip. */
-.oriko-clip-notice-sorted {
+.oriko-clip-notice-detail {
   margin-top: 4px;
   font-size: var(--font-ui-smaller);
   color: var(--text-accent);

@@ -29,7 +29,7 @@ Turn your web clippings into a wall of pictures. Oriko lays out every clipping i
 
 ## Clipping
 
-Paste a link anywhere on the wall, or run **Clip from clipboard** from the command palette. Oriko reads the page, downloads its images and video into your attachment folder, and writes a markdown note into your clippings folder. Pasting or dropping a picture or video saves it as a clipping of its own, and pasting a link you already clipped opens the existing note.
+Paste a link anywhere on the wall, or run **Clip from clipboard** from the command palette. Oriko reads the page, downloads its images and video into your attachment folder, and writes a markdown note into your clippings folder. Pasting or dropping a picture or video saves it as a clipping of its own, and pasting a link you already clipped shows a notice you can click to open the existing note.
 
 | Source | What you get |
 | --- | --- |
