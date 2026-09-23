@@ -193,9 +193,9 @@ export class CaptureService {
     const existing = this.index.records().find((r) => cleanUrl(r.source) === url);
     if (existing) {
       this.onProgress?.(null);
-      new Notice("Oriko: already clipped");
-      const file = this.app.vault.getAbstractFileByPath(existing.path);
-      if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+      // Opening the note is left to the user: a repeat paste is often a slip,
+      // and yanking the wall away for one is worse than a click to get there.
+      this.openableNotice("Oriko: already clipped", existing.path);
       return;
     }
 
@@ -444,10 +444,18 @@ export class CaptureService {
     // only when nobody was watching Obsidian: either no wall at all, or a
     // wall behind the browser the clip was shared from.
     if (this.onFinished && !this.shared) return;
-    // The hint is the whole point: Obsidian's own notices are dismissed by a
-    // click, so nothing about one suggests that clicking it could do work.
+    this.openableNotice(`Oriko: clipped ${label}`, path);
+  }
+
+  /**
+   * A notice that opens the note at `path` when clicked. The hint line is the
+   * whole point: Obsidian's own notices are dismissed by a click, so nothing
+   * about one suggests that clicking it could do work instead.
+   */
+  private openableNotice(text: string, path: string, detail = ""): void {
     const message = createFragment((el) => {
-      el.createDiv({ text: `Oriko: clipped ${label}` });
+      el.createDiv({ text });
+      if (detail) el.createDiv({ cls: "oriko-clip-notice-detail", text: detail });
       el.createDiv({ cls: "oriko-clip-notice-hint", text: "Click to open the note" });
     });
     const notice = new Notice(message, CLIP_NOTICE_MS);
