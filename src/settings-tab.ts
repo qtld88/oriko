@@ -174,6 +174,73 @@ export class OrikoSettingTab extends PluginSettingTab {
    * setControlValue below, which is where the byte-to-megabyte translation
    * and the folder-change side effects live.
    */
+  /**
+   * One row per declared category or tag, two fields each. Obsidian's own list
+   * control supplies the add, delete and drag-to-reorder affordances and lays
+   * itself out for a phone, which is where a lot of clipping happens.
+   *
+   * The description is not a label: it is what the model matches a clipping
+   * against, so it sits in the row beside the name rather than in the
+   * setting's own description.
+   */
+  private declarationList(
+    heading: string,
+    key: "sortCategories" | "sortTags",
+    emptyState: string,
+    addLabel: string
+  ): SettingDefinitionItem {
+    const list = this.plugin.settings[key];
+    const save = (): Promise<void> => this.plugin.saveSettings();
+    const saveAndRedraw = (): void => {
+      void save().then(() => this.update());
+    };
+    return {
+      type: "list",
+      heading,
+      emptyState,
+      addItem: {
+        name: addLabel,
+        action: () => {
+          list.push({ name: "", description: "" });
+          saveAndRedraw();
+        },
+      },
+      onDelete: (index: number) => {
+        list.splice(index, 1);
+        saveAndRedraw();
+      },
+      onReorder: (from: number, to: number) => {
+        const [moved] = list.splice(from, 1);
+        list.splice(to, 0, moved);
+        void save();
+      },
+      items: list.map((entry, index) => ({
+        name: entry.name || addLabel,
+        render: (setting: Setting) => {
+          setting
+            .addText((text) =>
+              text
+                .setPlaceholder("Name")
+                .setValue(entry.name)
+                .onChange((value) => {
+                  list[index].name = value;
+                  void save();
+                })
+            )
+            .addText((text) =>
+              text
+                .setPlaceholder("What belongs here")
+                .setValue(entry.description)
+                .onChange((value) => {
+                  list[index].description = value;
+                  void save();
+                })
+            );
+        },
+      })),
+    };
+  }
+
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [
       {
@@ -308,6 +375,73 @@ export class OrikoSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
+        heading: "Auto-sorting",
+        items: [
+          {
+            name: "Sort new clippings",
+            desc: "Ask a model which of your categories a clipping belongs to, before the note is written. Nothing leaves your vault until you set an endpoint below.",
+            control: { type: "toggle", key: "autoSort" },
+          },
+          {
+            name: "File sorted clippings by",
+            desc: "Where the decided category goes. The categories property is written either way, so changing this later does not strand what is already filed.",
+            control: {
+              type: "dropdown",
+              key: "sortDestination",
+              options: {
+                property: "The categories property only",
+                subfolder: "A subfolder of the clippings folder",
+                grid: "An Oriko grid of the same name",
+                folder: "An Oriko folder of the same name",
+              },
+            },
+          },
+          {
+            name: "Decision endpoint",
+            desc: "A model that answers typed questions: a Laya sidecar on your own machine, or a hosted service. Laya runs offline and sends nothing anywhere.",
+            control: { type: "text", key: "sortEndpoint" },
+          },
+          {
+            name: "Decision endpoint key",
+            desc: "Leave empty for a local sidecar. Stored as plain text in this plugin's data file, as with every Obsidian plugin that holds a key.",
+            control: { type: "text", key: "sortApiKey" },
+          },
+          {
+            name: "Language model base URL",
+            desc: "Any OpenAI-compatible endpoint, asked when the decision endpoint is unsure or unreachable. It can invent tags, which the decision model cannot.",
+            control: { type: "text", key: "sortLlmBaseUrl" },
+          },
+          {
+            name: "Language model",
+            desc: "The model name to send, such as gpt-4o-mini or llama3.2.",
+            control: { type: "text", key: "sortLlmModel" },
+          },
+          {
+            name: "Language model key",
+            desc: "Stored as plain text in this plugin's data file.",
+            control: { type: "text", key: "sortLlmApiKey" },
+          },
+          {
+            name: "Certainty needed",
+            desc: "Between 0 and 1. Below this, a clipping stays at the root marked unsorted rather than filed on a guess. Measure it on your own clippings before trusting it.",
+            control: { type: "number", key: "sortThreshold" },
+          },
+        ],
+      },
+      this.declarationList(
+        "Categories",
+        "sortCategories",
+        "No categories yet. Sorting stays off until there is at least one. Keep the list short: accuracy drops past about twenty options, and every description shares one budget of roughly 190 tokens.",
+        "Add category"
+      ),
+      this.declarationList(
+        "Tags",
+        "sortTags",
+        "No tags yet. The decision model can only answer yes or no about tags you name here; a language model invents its own.",
+        "Add tag"
+      ),
+      {
+        type: "group",
         heading: "Filter properties",
         items: [
           {
@@ -345,6 +479,14 @@ export class OrikoSettingTab extends PluginSettingTab {
         const mb = Number(value);
         if (!Number.isFinite(mb) || mb <= 0) return;
         settings.maxBytes = Math.round(mb * 1048576);
+        break;
+      }
+      case "sortThreshold": {
+        const threshold = Number(value);
+        // Out-of-range silently ignored rather than clamped: a typed 6 is a
+        // slip, and clamping it to 1 would quietly stop every clip sorting.
+        if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) return;
+        settings.sortThreshold = threshold;
         break;
       }
       case "thumbnailWidth": {
