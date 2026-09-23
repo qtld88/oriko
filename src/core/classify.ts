@@ -29,12 +29,18 @@ export interface Verdict {
 }
 
 /**
- * Why a clipping ended up where it did. "Unsure" and "unavailable" both leave
- * it unsorted, but one is the model hedging and the other is a server that
- * never spoke, and telling a user the wrong one sends them debugging the wrong
- * thing.
+ * Why a clipping ended up where it did. Four of these leave it unsorted, and
+ * they are not the same thing: the model hedged, a server never spoke, no
+ * category was ever declared, or the page offered no text to read. Telling a
+ * user the wrong one sends them debugging the wrong thing.
  */
-export type SortOutcome = "sorted" | "unsure" | "unavailable" | "no-categories" | "off";
+export type SortOutcome =
+  | "sorted"
+  | "unsure"
+  | "unavailable"
+  | "no-categories"
+  | "no-text"
+  | "off";
 
 export interface Classification {
   verdict: Verdict;
@@ -285,11 +291,20 @@ export function verdictSubfolder(verdict: Verdict, destination: SortDestination)
 }
 
 /**
- * What the model reads. The title leads because these models read a bounded
- * number of tokens and cut what overflows from the end, so the most telling
- * line has to come first. The URL earns its place: a domain often decides a
- * category on its own where a social post's title says nothing.
+ * What the model reads: the description alone, and the title only when there
+ * is no description.
+ *
+ * The title and the URL were sent too until a run over 47 labelled clippings
+ * measured what they cost. Accuracy went from 55% to 72% once they were
+ * dropped. Both carry the platform rather than the subject, and they bracket
+ * the text that does carry it: "Jean-Luc Mélenchon (@jlmelenchon) on Threads"
+ * followed by a paragraph on fuel prices, then threads.com, was filed under
+ * TECH. Two mentions of a social network outvoted the politics between them.
+ *
+ * A page with neither yields an empty state, and an empty state is the honest
+ * answer: there is nothing to sort on, so the clipping stays unsorted instead
+ * of being filed on the strength of a domain name.
  */
-export function clippingState(title: string, description: string, url: string): string {
-  return [title, description, url].filter((part) => part.trim().length > 0).join("\n");
+export function clippingState(title: string, description: string, _url: string): string {
+  return description.trim() || title.trim();
 }
