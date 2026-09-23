@@ -423,7 +423,7 @@ export class OrikoSettingTab extends PluginSettingTab {
           },
           {
             name: "Certainty needed",
-            desc: "Between 0 and 1. Below this, a clipping stays at the root marked unsorted rather than filed on a guess. Measure it on your own clippings before trusting it.",
+            desc: "Between 0 and 1, and it only governs the decision endpoint, which reports a real probability per option. A language model reports none worth trusting, so its first answer is taken as it comes. Measure this on your own clippings before relying on it.",
             control: { type: "number", key: "sortThreshold" },
           },
         ],
