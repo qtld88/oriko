@@ -48,6 +48,8 @@ function todayStamp(): string {
 export class CaptureService {
   /** Set by the grid view so capture can drive its progress bar. */
   onProgress: ((state: ProgressState | null) => void) | null = null;
+  /** True while the capture in flight arrived from outside the app. */
+  private shared = false;
   /**
    * Carries the note's path as well as its label: the grid flies to what you
    * just clipped, and a title is not enough to find a tile by.
@@ -152,7 +154,7 @@ export class CaptureService {
       return;
     }
 
-    this.onFinished?.(title, notePath);
+    this.finished(title, notePath);
   }
 
   /**
@@ -173,7 +175,8 @@ export class CaptureService {
    * `grid` is where to file it, "" for home. Left out, the open grid is used,
    * which is what an in-app clip means.
    */
-  async capture(raw: string, grid?: string): Promise<void> {
+  async capture(raw: string, grid?: string, shared = false): Promise<void> {
+    this.shared = shared;
     const url = cleanUrl(raw);
     if (!isHttpUrl(url)) {
       new Notice("Oriko: that is not a link");
@@ -247,7 +250,7 @@ export class CaptureService {
     // handleModify, not ingest: ingest updates the index silently, so the
     // grid was never told the clipping had landed.
     await this.index.handleModify(file);
-    this.onFinished?.(link.title.slice(0, 40), file.path);
+    this.finished(link.title.slice(0, 40), file.path);
   }
 
   private async resolve(url: string): Promise<ResolvedLink | null> {
@@ -411,8 +414,40 @@ export class CaptureService {
     );
     if (!file) return { ok: false, reason: "could not create the note" };
     await this.index.handleModify(file);
-    this.onFinished?.(link.title.slice(0, 40), file.path);
+    this.finished(link.title.slice(0, 40), file.path);
     return { ok: true };
+  }
+
+  /**
+   * Announces a finished clip. The wall's own listener draws the progress bar
+   * and flies to the tile, but a clip shared from a phone or a browser may
+   * have no wall watching at all, and a capture that says nothing is
+   * indistinguishable from one that silently failed.
+   *
+   * The notice is then the only handle on the note, so it opens it when
+   * clicked and stays until it is: the clip landed behind another app's
+   * window, and a notice that fades after five seconds is long gone by the
+   * time anyone looks at Obsidian again.
+   */
+  private finished(label: string, path: string): void {
+    this.onFinished?.(label, path);
+    // The wall, when there is one, has already been told. A notice follows
+    // only when nobody was watching Obsidian: either no wall at all, or a
+    // wall behind the browser the clip was shared from.
+    if (this.onFinished && !this.shared) return;
+    // The hint is the whole point: Obsidian's own notices are dismissed by a
+    // click, so nothing about one suggests that clicking it could do work.
+    const message = createFragment((el) => {
+      el.createDiv({ text: `Oriko: clipped ${label}` });
+      el.createDiv({ cls: "oriko-clip-notice-hint", text: "Click to open the note" });
+    });
+    const notice = new Notice(message, 0);
+    notice.containerEl.addClass("oriko-clip-notice");
+    notice.containerEl.addEventListener("click", () => {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+      notice.hide();
+    });
   }
 
   private async createNote(
