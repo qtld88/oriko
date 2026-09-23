@@ -58,14 +58,65 @@ const META_TAG = /<meta\b[^>]*>/gi;
 const META_KEY = /\b(?:property|name)\s*=\s*["']([^"']+)["']/i;
 const META_CONTENT = /\bcontent\s*=\s*["']([^"']*)["']/i;
 
+/**
+ * Named entities worth carrying, not the full HTML5 set of 2231 names. A meta
+ * tag is written by a serialiser, and serialisers reach for a numeric
+ * reference outside this range, so the long tail buys nothing. An unrecognised
+ * name is left standing rather than guessed at.
+ */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'",
+  nbsp: " ", ensp: " ", emsp: " ", thinsp: " ", shy: "­",
+  ndash: "–", mdash: "—", hellip: "…", middot: "·", bull: "•",
+  lsquo: "‘", rsquo: "’", sbquo: "‚", ldquo: "“", rdquo: "”", bdquo: "„",
+  laquo: "«", raquo: "»", prime: "′", Prime: "″", dagger: "†", Dagger: "‡",
+  copy: "©", reg: "®", trade: "™", deg: "°", plusmn: "±", times: "×", divide: "÷",
+  euro: "€", pound: "£", yen: "¥", cent: "¢", sect: "§", para: "¶", micro: "µ",
+  iexcl: "¡", iquest: "¿", szlig: "ß", frac12: "½", frac14: "¼", frac34: "¾",
+  agrave: "à", aacute: "á", acirc: "â", atilde: "ã", auml: "ä", aring: "å", aelig: "æ",
+  ccedil: "ç", egrave: "è", eacute: "é", ecirc: "ê", euml: "ë",
+  igrave: "ì", iacute: "í", icirc: "î", iuml: "ï", ntilde: "ñ",
+  ograve: "ò", oacute: "ó", ocirc: "ô", otilde: "õ", ouml: "ö", oslash: "ø",
+  ugrave: "ù", uacute: "ú", ucirc: "û", uuml: "ü", yacute: "ý", yuml: "ÿ",
+  Agrave: "À", Aacute: "Á", Acirc: "Â", Atilde: "Ã", Auml: "Ä", Aring: "Å", AElig: "Æ",
+  Ccedil: "Ç", Egrave: "È", Eacute: "É", Ecirc: "Ê", Euml: "Ë",
+  Igrave: "Ì", Iacute: "Í", Icirc: "Î", Iuml: "Ï", Ntilde: "Ñ",
+  Ograve: "Ò", Oacute: "Ó", Ocirc: "Ô", Otilde: "Õ", Ouml: "Ö", Oslash: "Ø",
+  Ugrave: "Ù", Uacute: "Ú", Ucirc: "Û", Uuml: "Ü", Yacute: "Ý",
+};
+
+const ENTITY = /&(#\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g;
+
+/**
+ * Turns the entities in a meta tag back into the text they stand for.
+ *
+ * Numeric references are the ones that matter. Threads writes an accented name
+ * as `Me&#x301;lenchon` and a French title as `Avis aux g&#xe9;nies`, and left
+ * undecoded both reach the note, the file name and whatever model is asked to
+ * sort it, as letters that spell nothing.
+ *
+ * One pass, never a chain of replaces: `&amp;quot;` has to come out as the six
+ * characters `&quot;`, which is what the page meant, and a second pass over
+ * the output would turn it into a bare quotation mark.
+ *
+ * The result is normalised to NFC, because a decoded combining accent composes
+ * with the letter before it. `Me` + U+0301 and `Mé` look alike and are not the
+ * same string, and the difference reaches file names and search.
+ */
 export function decodeEntities(value: string): string {
   return value
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#0?39;/g, "'")
-    .replace(/&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
+    .replace(ENTITY, (whole, body: string) => {
+      if (body[0] !== "#") return NAMED_ENTITIES[body] ?? whole;
+
+      const hex = body[1] === "x" || body[1] === "X";
+      const code = Number.parseInt(hex ? body.slice(2) : body.slice(1), hex ? 16 : 10);
+      // A lone surrogate and anything past the last plane denote no character,
+      // and fromCodePoint throws on them rather than returning one.
+      if (!Number.isFinite(code) || code < 1 || code > 0x10ffff) return whole;
+      if (code >= 0xd800 && code <= 0xdfff) return whole;
+      return String.fromCodePoint(code);
+    })
+    .normalize("NFC");
 }
 
 /** Collects every og:/twitter: meta tag on a page, first declaration winning. */
