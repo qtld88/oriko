@@ -17,12 +17,24 @@ import type { OrikoSettings } from "./core/settings";
  * returns a verdict, and NO_VERDICT is a perfectly good one: it means the note
  * is written unsorted and a person decides later.
  */
-const TIMEOUT_MS = 5000;
+/**
+ * Two guards, because the engines are two different machines. A System One
+ * model answers a batch of questions in tens of milliseconds, so anything past
+ * a second means the endpoint is not there. A chat model generating forty
+ * tokens takes seconds: llama3.2:3b on an M-series laptop was measured at 9.6 s
+ * for exactly the request this file sends, so a five second guard would have
+ * timed a working local setup out every single time.
+ *
+ * Neither costs wall-clock time in the normal case: the call runs beside a
+ * media download that already takes seconds.
+ */
+const SYSTEM_ONE_TIMEOUT_MS = 5000;
+const LLM_TIMEOUT_MS = 30000;
 
-function withTimeout<T>(work: Promise<T>, fallback: T): Promise<T> {
+function withTimeout<T>(work: Promise<T>, fallback: T, ms: number): Promise<T> {
   return Promise.race([
     work.catch(() => fallback),
-    new Promise<T>((resolve) => window.setTimeout(() => resolve(fallback), TIMEOUT_MS)),
+    new Promise<T>((resolve) => window.setTimeout(() => resolve(fallback), ms)),
   ]);
 }
 
@@ -55,16 +67,24 @@ export class Classifier {
     const hasLlm = Boolean(s.sortLlmBaseUrl && s.sortLlmModel);
 
     if (s.sortEndpoint) {
-      const first = await withTimeout(this.askSystemOne(state, categories, tags), NO_VERDICT);
+      const first = await withTimeout(
+        this.askSystemOne(state, categories, tags),
+        NO_VERDICT,
+        SYSTEM_ONE_TIMEOUT_MS
+      );
       if (first.category || !hasLlm) return first;
       // Tags survive a refused category: the typed engine may have answered
       // the yes-or-no questions well while being unsure of the category.
-      const second = await withTimeout(this.askLlm(state, categories), NO_VERDICT);
+      const second = await withTimeout(
+        this.askLlm(state, categories),
+        NO_VERDICT,
+        LLM_TIMEOUT_MS
+      );
       if (!second.category) return first;
       return { ...second, tags: mergeTags(first.tags, second.tags) };
     }
 
-    if (hasLlm) return withTimeout(this.askLlm(state, categories), NO_VERDICT);
+    if (hasLlm) return withTimeout(this.askLlm(state, categories), NO_VERDICT, LLM_TIMEOUT_MS);
 
     return NO_VERDICT;
   }
