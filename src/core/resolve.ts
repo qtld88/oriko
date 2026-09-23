@@ -1,6 +1,7 @@
 import { extensionOf, kindForExtension } from "./formats";
 import { decodeEntities, readMetaTags } from "./page-cover";
 import { AMAZON_IMAGE_HOST, AMAZON_IMAGE_MODIFIER } from "./normalize";
+import type { NoteExtras } from "./classify";
 
 export interface ResolvedMedia {
   url: string;
@@ -483,7 +484,12 @@ export function coverImageFor(media: readonly ResolvedMedia[]): string {
  * Home is the absence of the key, so stamping it would put a redundant line
  * in every note the plugin creates.
  */
-export function buildNote(link: ResolvedLink, created = today(), grid = ""): string {
+export function buildNote(
+  link: ResolvedLink,
+  created = today(),
+  grid = "",
+  extras: NoteExtras = { lines: [], tags: [] }
+): string {
   const lines = [
     "---",
     `title: ${yamlString(link.title)}`,
@@ -500,6 +506,10 @@ export function buildNote(link: ResolvedLink, created = today(), grid = ""): str
   const image = coverImageFor(link.media);
   lines.push(image ? `image: ${yamlString(image)}` : "image:");
   lines.push("tags:", '  - "clippings"');
+  // Sorting's tags join the built-in one inside the same block, and its other
+  // keys follow. Both are empty unless auto-sorting decided something.
+  for (const tag of extras.tags) lines.push(`  - ${yamlString(tag)}`);
+  lines.push(...extras.lines);
   if (grid) lines.push(`grid: ${yamlString(grid)}`);
   lines.push("---", "");
 

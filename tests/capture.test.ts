@@ -239,3 +239,31 @@ describe("coverImageFor", () => {
     ).toBe("[[Attachments/a.jpg]]");
   });
 });
+
+describe("buildNote with sorting extras", () => {
+  it("writes the extra lines inside the frontmatter", () => {
+    const note = buildNote(link(), "2026-09-22", "", {
+      lines: ["categories:", '  - "DESIGN"'],
+      tags: [],
+    });
+    expect(note).toContain('categories:\n  - "DESIGN"');
+    expect(note.split("---")[1]).toContain("categories:");
+  });
+
+  it("appends extra tags after the built-in one", () => {
+    const note = buildNote(link(), "2026-09-22", "", {
+      lines: [],
+      tags: ["woodworking", "diy"],
+    });
+    expect(note).toContain('  - "clippings"\n  - "woodworking"\n  - "diy"');
+  });
+
+  it("is unchanged when no extras are given, so old call sites still work", () => {
+    expect(buildNote(link(), "2026-09-22")).toBe(buildNote(link(), "2026-09-22", ""));
+  });
+
+  it("escapes a quote in an extra tag", () => {
+    const note = buildNote(link(), "2026-09-22", "", { lines: [], tags: ['a"b'] });
+    expect(note).toContain('  - "a\\"b"');
+  });
+});

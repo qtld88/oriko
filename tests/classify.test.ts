@@ -1,0 +1,325 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildLlmMessages,
+  buildSystemOneRequest,
+  clippingState,
+  readLlmResponse,
+  readSystemOneResponse,
+  usableCategories,
+  verdictExtras,
+  verdictSubfolder,
+} from "../src/core/classify";
+import type { SortCategory } from "../src/core/classify";
+
+const CATEGORIES: SortCategory[] = [
+  { name: "DESIGN", description: "graphics, typography, objects" },
+  { name: "TECH", description: "code, software tools, hardware" },
+];
+
+const TAGS: SortCategory[] = [
+  { name: "woodworking", description: "working wood" },
+  { name: "diy", description: "making things yourself" },
+];
+
+describe("usableCategories", () => {
+  it("keeps a well-formed list untouched", () => {
+    expect(usableCategories(CATEGORIES)).toEqual(CATEGORIES);
+  });
+
+  it("drops an entry whose name is blank, which is a half-typed row", () => {
+    const list = [...CATEGORIES, { name: "", description: "nothing yet" }];
+    expect(usableCategories(list)).toEqual(CATEGORIES);
+  });
+
+  it("drops a name that is only whitespace", () => {
+    const list = [...CATEGORIES, { name: "   ", description: "x" }];
+    expect(usableCategories(list)).toEqual(CATEGORIES);
+  });
+
+  it("trims both fields, so a stray space cannot make a second category", () => {
+    const list = [{ name: " DESIGN ", description: " graphics " }];
+    expect(usableCategories(list)).toEqual([{ name: "DESIGN", description: "graphics" }]);
+  });
+
+  it("keeps the first of a duplicate name, because criteria is a map", () => {
+    const list = [...CATEGORIES, { name: "DESIGN", description: "later" }];
+    expect(usableCategories(list)).toEqual(CATEGORIES);
+  });
+
+  it("is empty for an empty list", () => {
+    expect(usableCategories([])).toEqual([]);
+  });
+});
+
+describe("buildSystemOneRequest", () => {
+  it("asks one choice question over the categories", () => {
+    const body = buildSystemOneRequest("a state", CATEGORIES, []);
+    expect(body.state).toBe("a state");
+    expect(body.questions.category).toEqual({
+      type: "choice",
+      instructions: "Which category is this web page about?",
+      criteria: {
+        DESIGN: "graphics, typography, objects",
+        TECH: "code, software tools, hardware",
+      },
+    });
+  });
+
+  it("asks nothing else when no tags are declared", () => {
+    const body = buildSystemOneRequest("a state", CATEGORIES, []);
+    expect(Object.keys(body.questions)).toEqual(["category"]);
+  });
+
+  it("adds one noul per tag, prefixed so it cannot collide with category", () => {
+    const tags: SortCategory[] = [
+      { name: "woodworking", description: "working wood with tools" },
+    ];
+    const body = buildSystemOneRequest("a state", CATEGORIES, tags);
+    expect(body.questions["tag:woodworking"]).toEqual({
+      type: "noul",
+      instructions: "This web page is about working wood with tools",
+    });
+  });
+
+  it("falls back to the tag name when it has no description", () => {
+    const tags: SortCategory[] = [{ name: "diy", description: "" }];
+    const body = buildSystemOneRequest("a state", CATEGORIES, tags);
+    expect(body.questions["tag:diy"].instructions).toBe("This web page is about diy");
+  });
+});
+
+function answer(probabilities: Record<string, number>, confidence = 0.9): unknown {
+  const choice = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0][0];
+  return { answers: { category: { type: "choice", choice, confidence, probabilities } } };
+}
+
+describe("readSystemOneResponse", () => {
+  it("takes the winner when it clears the threshold", () => {
+    const body = answer({ DESIGN: 0.91, TECH: 0.09 });
+    expect(readSystemOneResponse(body, CATEGORIES, [], 0.6)).toEqual({
+      category: "DESIGN",
+      tags: [],
+      probability: 0.91,
+    });
+  });
+
+  it("decides nothing when the winner is below the threshold", () => {
+    const body = answer({ DESIGN: 0.55, TECH: 0.45 });
+    expect(readSystemOneResponse(body, CATEGORIES, [], 0.6).category).toBe("");
+  });
+
+  it("accepts a winner at exactly the threshold", () => {
+    const body = answer({ DESIGN: 0.6, TECH: 0.4 });
+    expect(readSystemOneResponse(body, CATEGORIES, [], 0.6).category).toBe("DESIGN");
+  });
+
+  it("sorts on probability even when entropy makes confidence low", () => {
+    // Six categories spread thin: confidence is one minus normalised entropy,
+    // so it collapses here while the winner is still clearly ahead. This is
+    // the case the threshold must not reject.
+    const body = answer({ DESIGN: 0.7, TECH: 0.06, A: 0.06, B: 0.06, C: 0.06, D: 0.06 }, 0.21);
+    expect(readSystemOneResponse(body, CATEGORIES, [], 0.6).category).toBe("DESIGN");
+  });
+
+  it("refuses a category nobody declared", () => {
+    const body = answer({ SPORTS: 0.99 });
+    expect(readSystemOneResponse(body, CATEGORIES, [], 0.6).category).toBe("");
+  });
+
+  it("keeps tags at or above the threshold, in declaration order", () => {
+    const body = {
+      answers: {
+        category: { type: "choice", choice: "DESIGN", probabilities: { DESIGN: 0.9 } },
+        "tag:diy": { type: "noul", noul: 0.8 },
+        "tag:woodworking": { type: "noul", noul: 0.95 },
+      },
+    };
+    expect(readSystemOneResponse(body, CATEGORIES, TAGS, 0.6).tags).toEqual([
+      "woodworking",
+      "diy",
+    ]);
+  });
+
+  it("drops a tag below the threshold", () => {
+    const body = {
+      answers: {
+        category: { type: "choice", choice: "DESIGN", probabilities: { DESIGN: 0.9 } },
+        "tag:woodworking": { type: "noul", noul: 0.2 },
+        "tag:diy": { type: "noul", noul: 0.9 },
+      },
+    };
+    expect(readSystemOneResponse(body, CATEGORIES, TAGS, 0.6).tags).toEqual(["diy"]);
+  });
+
+  it("survives a missing answer key", () => {
+    expect(readSystemOneResponse({ answers: {} }, CATEGORIES, TAGS, 0.6)).toEqual({
+      category: "",
+      tags: [],
+      probability: 0,
+    });
+  });
+
+  it("survives a body that is not an object at all", () => {
+    expect(readSystemOneResponse("nope", CATEGORIES, [], 0.6).category).toBe("");
+    expect(readSystemOneResponse(null, CATEGORIES, [], 0.6).category).toBe("");
+  });
+
+  it("still returns tags when the category was refused", () => {
+    const body = {
+      answers: {
+        category: { type: "choice", choice: "SPORTS", probabilities: { SPORTS: 0.99 } },
+        "tag:diy": { type: "noul", noul: 0.9 },
+      },
+    };
+    const verdict = readSystemOneResponse(body, CATEGORIES, TAGS, 0.6);
+    expect(verdict.category).toBe("");
+    expect(verdict.tags).toEqual(["diy"]);
+  });
+});
+
+describe("buildLlmMessages", () => {
+  it("names every declared category in the prompt", () => {
+    const body = buildLlmMessages("a state", CATEGORIES, "gpt-4o-mini");
+    const prompt = JSON.stringify(body.messages);
+    expect(prompt).toContain("DESIGN");
+    expect(prompt).toContain("graphics, typography, objects");
+  });
+
+  it("carries the model and asks for a JSON object", () => {
+    const body = buildLlmMessages("a state", CATEGORIES, "gpt-4o-mini");
+    expect(body.model).toBe("gpt-4o-mini");
+    expect(body.response_format).toEqual({ type: "json_object" });
+  });
+
+  it("puts the state in the user message, not the system one", () => {
+    const body = buildLlmMessages("the clipping text", CATEGORIES, "m");
+    expect(body.messages[1]).toEqual({ role: "user", content: "the clipping text" });
+  });
+});
+
+describe("readLlmResponse", () => {
+  it("reads a category and free tags", () => {
+    const text = '{"category":"DESIGN","tags":["woodworking","clamps"]}';
+    expect(readLlmResponse(text, CATEGORIES)).toEqual({
+      category: "DESIGN",
+      tags: ["woodworking", "clamps"],
+      probability: 1,
+    });
+  });
+
+  it("digs the object out of prose, which small models wrap it in", () => {
+    const text = 'Here you go:\n```json\n{"category":"TECH","tags":[]}\n```';
+    expect(readLlmResponse(text, CATEGORIES).category).toBe("TECH");
+  });
+
+  it("refuses a category nobody declared", () => {
+    const text = '{"category":"SPORTS","tags":["running"]}';
+    const verdict = readLlmResponse(text, CATEGORIES);
+    expect(verdict.category).toBe("");
+    expect(verdict.tags).toEqual(["running"]);
+  });
+
+  it("decides nothing when the reply is not JSON", () => {
+    expect(readLlmResponse("I am afraid I cannot do that", CATEGORIES)).toEqual({
+      category: "",
+      tags: [],
+      probability: 0,
+    });
+  });
+
+  it("ignores tags that are not strings", () => {
+    const text = '{"category":"DESIGN","tags":["ok",42,null,{"a":1}]}';
+    expect(readLlmResponse(text, CATEGORIES).tags).toEqual(["ok"]);
+  });
+
+  it("tolerates a missing tags key", () => {
+    expect(readLlmResponse('{"category":"DESIGN"}', CATEGORIES).tags).toEqual([]);
+  });
+
+  it("trims and drops blank tags", () => {
+    const text = '{"category":"DESIGN","tags":["  spaced  ","","   "]}';
+    expect(readLlmResponse(text, CATEGORIES).tags).toEqual(["spaced"]);
+  });
+});
+
+const SORTED = { category: "DESIGN", tags: ["woodworking"], probability: 0.9 };
+const UNSORTED = { category: "", tags: [], probability: 0 };
+
+describe("verdictExtras", () => {
+  it("writes categories and tags whatever the destination", () => {
+    expect(verdictExtras(SORTED, "property")).toEqual({
+      lines: ["categories:", '  - "DESIGN"'],
+      tags: ["woodworking"],
+    });
+  });
+
+  it("adds grid for the grid destination", () => {
+    expect(verdictExtras(SORTED, "grid").lines).toEqual([
+      "categories:",
+      '  - "DESIGN"',
+      'grid: "DESIGN"',
+    ]);
+  });
+
+  it("adds folder for the folder destination", () => {
+    expect(verdictExtras(SORTED, "folder").lines).toEqual([
+      "categories:",
+      '  - "DESIGN"',
+      'folder: "DESIGN"',
+    ]);
+  });
+
+  it("adds nothing extra for the subfolder destination, which moves the file", () => {
+    expect(verdictExtras(SORTED, "subfolder").lines).toEqual(["categories:", '  - "DESIGN"']);
+  });
+
+  it("marks an undecided clipping instead of writing an empty category", () => {
+    expect(verdictExtras(UNSORTED, "subfolder")).toEqual({
+      lines: ["unsorted: true"],
+      tags: [],
+    });
+  });
+
+  it("still writes tags when only the category was undecided", () => {
+    const verdict = { category: "", tags: ["diy"], probability: 0 };
+    expect(verdictExtras(verdict, "property")).toEqual({
+      lines: ["unsorted: true"],
+      tags: ["diy"],
+    });
+  });
+
+  it("escapes a quote in a category so the frontmatter still parses", () => {
+    const verdict = { category: 'DE"SIGN', tags: [], probability: 0.9 };
+    expect(verdictExtras(verdict, "property").lines).toEqual([
+      "categories:",
+      '  - "DE\\"SIGN"',
+    ]);
+  });
+});
+
+describe("verdictSubfolder", () => {
+  it("names the category only for the subfolder destination", () => {
+    expect(verdictSubfolder(SORTED, "subfolder")).toBe("DESIGN");
+    expect(verdictSubfolder(SORTED, "grid")).toBe("");
+    expect(verdictSubfolder(SORTED, "property")).toBe("");
+  });
+
+  it("is empty when nothing was decided", () => {
+    expect(verdictSubfolder(UNSORTED, "subfolder")).toBe("");
+  });
+});
+
+describe("clippingState", () => {
+  it("puts the title first, because an overlong state is cut from the end", () => {
+    const state = clippingState("A title", "A description", "https://example.com");
+    expect(state.startsWith("A title")).toBe(true);
+    expect(state).toContain("A description");
+    expect(state).toContain("https://example.com");
+  });
+
+  it("skips an empty description rather than leaving a blank line", () => {
+    expect(clippingState("A title", "", "https://example.com")).toBe(
+      "A title\nhttps://example.com"
+    );
+  });
+});

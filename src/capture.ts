@@ -4,6 +4,14 @@ import { todayISO as today } from "./core/dates";
 import { extensionForMime } from "./core/formats";
 import { fileableGrid } from "./core/spaces";
 import type { ClippingIndex } from "./index-store";
+import type { Classifier } from "./classifier";
+import {
+  NO_VERDICT,
+  clippingState,
+  verdictExtras,
+  verdictSubfolder,
+} from "./core/classify";
+import type { Verdict } from "./core/classify";
 import {
   ResolvedLink,
   amazonProduct,
@@ -60,7 +68,8 @@ export class CaptureService {
     private app: App,
     private settings: () => OrikoSettings,
     private archiver: ArchiveService,
-    private index: ClippingIndex
+    private index: ClippingIndex,
+    private classifier: Classifier
   ) {}
 
   async captureFromClipboard(): Promise<void> {
@@ -214,6 +223,12 @@ export class CaptureService {
     // themselves. These CDN urls are signed and expire within days; a note
     // that points at one is a note that stops working.
     this.report(0.3, "Downloading media…");
+    // Started here rather than awaited here. The model answers in well under a
+    // second while the media download takes several, so running them side by
+    // side costs no wall-clock time at all.
+    const sorting = this.classifier
+      .classify(clippingState(link.title, link.description, link.url))
+      .catch(() => NO_VERDICT);
     const archived = await this.archiver.archiveResolved(
       link.url,
       link.media,
@@ -241,7 +256,8 @@ export class CaptureService {
     }
 
     this.report(0.85, "Creating clipping…");
-    const file = await this.createNote({ ...link, media }, undefined, grid);
+    const verdict = await sorting;
+    const file = await this.createNote({ ...link, media }, undefined, grid, verdict);
     if (!file) {
       this.onProgress?.(null);
       return;
@@ -453,9 +469,15 @@ export class CaptureService {
   private async createNote(
     link: ResolvedLink,
     content?: (grid: string) => string,
-    explicitGrid?: string
+    explicitGrid?: string,
+    verdict: Verdict = NO_VERDICT
   ): Promise<TFile | null> {
-    const folder = normalizePath(this.settings().clippingsFolder);
+    const destination = this.settings().sortDestination;
+    // Decided before the file exists, so no note is ever moved afterwards and
+    // no relative link into the attachments folder is ever broken.
+    const subfolder = verdictSubfolder(verdict, destination);
+    const root = this.settings().clippingsFolder;
+    const folder = normalizePath(subfolder ? `${root}/${subfolder}` : root);
     if (!this.app.vault.getFolderByPath(folder)) {
       await this.app.vault.createFolder(folder).catch(() => {});
     }
@@ -470,7 +492,12 @@ export class CaptureService {
 
     try {
       const grid = this.targetGrid(explicitGrid);
-      return await this.app.vault.create(path, content ? content(grid) : buildNote(link, today(), grid));
+      return await this.app.vault.create(
+        path,
+        content
+          ? content(grid)
+          : buildNote(link, today(), grid, verdictExtras(verdict, destination))
+      );
     } catch (error) {
       new Notice(`Oriko: could not create the note (${String(error)})`);
       return null;
