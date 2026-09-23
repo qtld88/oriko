@@ -457,6 +457,26 @@ function today(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+/**
+ * The picture a clipping is represented by outside the wall. Bases, Dataview
+ * and the file explorer all read frontmatter and none of them read the body,
+ * so an `![[…]]` embed is invisible to a card view however well the note
+ * itself renders. The archived copy wins over the origin's url for the same
+ * reason the body embeds it: that CDN link is signed and expires.
+ *
+ * Videos are skipped rather than linked. This is an image property, and a
+ * card asked to render an mp4 shows nothing at all.
+ *
+ * The value is a wikilink because that is how Obsidian stores a link
+ * property and what a cards view resolves. `cover:` stays a bare path: it is
+ * the wall's own override, and the scanner reads it with str().
+ */
+export function coverImageFor(media: readonly ResolvedMedia[]): string {
+  const image = media.find((item) => item.kind === "image");
+  if (!image) return "";
+  return image.localPath ? `[[${image.localPath}]]` : image.url;
+}
+
 /** Matches the Web Clipper's frontmatter contract, which the vault treats as fixed. */
 /**
  * `grid` is written only when the capture is going somewhere other than home.
@@ -475,6 +495,10 @@ export function buildNote(link: ResolvedLink, created = today(), grid = ""): str
   lines.push(link.published ? `published: ${yamlString(link.published)}` : "published:");
   lines.push(`created: ${created}`);
   lines.push(`description: ${yamlString(link.description)}`);
+  // Always written, empty or not, so every clipping carries the same keys
+  // and a cards view never has to cope with a missing property.
+  const image = coverImageFor(link.media);
+  lines.push(image ? `image: ${yamlString(image)}` : "image:");
   lines.push("tags:", '  - "clippings"');
   if (grid) lines.push(`grid: ${yamlString(grid)}`);
   lines.push("---", "");
@@ -519,6 +543,7 @@ export function buildScanNote(
     "published:",
     `created: ${created}`,
     "description:",
+    `image: ${yamlString(`[[${attachmentPath}]]`)}`,
     "tags:",
     '  - "clippings"',
     `cover: ${yamlString(attachmentPath)}`,
@@ -551,6 +576,7 @@ export function buildPastedImageNote(
     "published:",
     `created: ${created}`,
     "description:",
+    `image: ${yamlString(`[[${attachmentPath}]]`)}`,
     "tags:",
     '  - "clippings"',
     // A plain string: the scanner reads cover with str(), so a list here

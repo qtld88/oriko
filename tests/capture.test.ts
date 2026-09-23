@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildNote, buildPastedImageNote } from "../src/core/resolve";
+import { buildNote, buildPastedImageNote, buildScanNote, coverImageFor } from "../src/core/resolve";
 import type { ResolvedLink } from "../src/core/resolve";
 
 function link(overrides: Partial<ResolvedLink> = {}): ResolvedLink {
@@ -168,5 +168,74 @@ describe("buildNote with archived media", () => {
     );
     expect(note).toContain("![[Attachments/a.mp4]]");
     expect(note).toContain("![](https://cdn/b.jpg)");
+  });
+});
+
+describe("the image property", () => {
+  it("links the archived image, which is what a cards view can resolve", () => {
+    const note = buildNote(
+      link({ media: [{ url: "https://cdn/a.jpg", kind: "image", localPath: "Attachments/a.jpg" }] })
+    );
+    expect(note).toContain('image: "[[Attachments/a.jpg]]"');
+  });
+
+  it("falls back to the origin url when archiving did not land", () => {
+    const note = buildNote(link({ media: [{ url: "https://cdn/a.jpg", kind: "image" }] }));
+    expect(note).toContain('image: "https://cdn/a.jpg"');
+  });
+
+  it("skips a video, which no image property can render", () => {
+    const note = buildNote(
+      link({ media: [{ url: "https://cdn/a.mp4", kind: "video", localPath: "Attachments/a.mp4" }] })
+    );
+    expect(note).toContain("image:\n");
+    expect(note).not.toContain("a.mp4]]\"");
+  });
+
+  it("reaches past a leading video to the picture behind it", () => {
+    const note = buildNote(
+      link({
+        media: [
+          { url: "https://cdn/a.mp4", kind: "video", localPath: "Attachments/a.mp4" },
+          { url: "https://cdn/b.jpg", kind: "image", localPath: "Attachments/b.jpg" },
+        ],
+      })
+    );
+    expect(note).toContain('image: "[[Attachments/b.jpg]]"');
+  });
+
+  it("is written empty rather than omitted, so every clipping has the key", () => {
+    expect(buildNote(link({ media: [] }))).toContain("image:\n");
+  });
+
+  it("carries the scan on a scanned page", () => {
+    const note = buildScanNote("A page", "https://example.com", "Attachments/scan.png", "2026-09-22");
+    expect(note).toContain('image: "[[Attachments/scan.png]]"');
+  });
+
+  it("carries the attachment on a pasted image", () => {
+    const note = buildPastedImageNote("Pasted", "Attachments/p.png", "2026-09-22");
+    expect(note).toContain('image: "[[Attachments/p.png]]"');
+  });
+
+  it("leaves cover a bare path, which the wall reads with str()", () => {
+    const note = buildPastedImageNote("Pasted", "Attachments/p.png", "2026-09-22");
+    expect(note).toContain('cover: "Attachments/p.png"');
+  });
+});
+
+describe("coverImageFor", () => {
+  it("is empty for no media at all", () => {
+    expect(coverImageFor([])).toBe("");
+  });
+
+  it("is empty when every item is a video", () => {
+    expect(coverImageFor([{ url: "https://cdn/a.mp4", kind: "video" }])).toBe("");
+  });
+
+  it("prefers the archived copy over the expiring url", () => {
+    expect(
+      coverImageFor([{ url: "https://cdn/a.jpg?sig=1", kind: "image", localPath: "Attachments/a.jpg" }])
+    ).toBe("[[Attachments/a.jpg]]");
   });
 });
