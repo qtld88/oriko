@@ -326,16 +326,37 @@ describe("verdictSubfolder", () => {
 });
 
 describe("clippingState", () => {
-  it("puts the title first, because an overlong state is cut from the end", () => {
-    const state = clippingState("A title", "A description", "https://example.com");
-    expect(state.startsWith("A title")).toBe(true);
-    expect(state).toContain("A description");
-    expect(state).toContain("https://example.com");
+  it("sends the description alone, which measured 17 points better", () => {
+    expect(clippingState("A title", "A description", "https://example.com")).toBe(
+      "A description"
+    );
   });
 
-  it("skips an empty description rather than leaving a blank line", () => {
-    expect(clippingState("A title", "", "https://example.com")).toBe(
-      "A title\nhttps://example.com"
+  it("drops the url, which names the platform and not the subject", () => {
+    expect(clippingState("A title", "A description", "https://example.com")).not.toContain(
+      "example.com"
     );
+  });
+
+  it("falls back to the title when a page declares no description", () => {
+    expect(clippingState("A title", "", "https://example.com")).toBe("A title");
+  });
+
+  it("treats a whitespace-only description as absent", () => {
+    expect(clippingState("A title", "   \n  ", "https://example.com")).toBe("A title");
+  });
+
+  it("is empty for a bare link, so it stays unsorted rather than filed on a domain", () => {
+    expect(clippingState("", "", "https://www.threads.com/")).toBe("");
+  });
+
+  it("keeps the platform out of a social post that carries its own text", () => {
+    const state = clippingState(
+      "Jean-Luc Mélenchon (@jlmelenchon) on Threads",
+      "Avis aux génies du gouvernement qui font semblant de ne pas savoir comment baisser les prix à la pompe.",
+      "https://www.threads.com/share/GSl8zvm8L/"
+    );
+    expect(state).not.toContain("Threads");
+    expect(state).toContain("gouvernement");
   });
 });

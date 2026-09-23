@@ -73,6 +73,13 @@ export class Classifier {
     if (categories.length === 0) return { verdict: NO_VERDICT, outcome: "no-categories" };
     const tags = usableCategories(s.sortTags);
 
+    // A bare link to a site's front page resolves to no title and no
+    // description, and an engine handed an empty state answers anyway: a chat
+    // model in particular will name a category rather than return nothing.
+    // That is how https://www.threads.com/ was once filed under KIDS. There is
+    // nothing here to read, so nothing here to decide.
+    if (!state.trim()) return { verdict: NO_VERDICT, outcome: "no-text" };
+
     const hasLlm = Boolean(s.sortLlmBaseUrl && s.sortLlmModel);
     if (!s.sortEndpoint && !hasLlm) {
       return { verdict: NO_VERDICT, outcome: "unavailable" };
