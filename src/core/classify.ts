@@ -28,6 +28,19 @@ export interface Verdict {
   probability: number;
 }
 
+/**
+ * Why a clipping ended up where it did. "Unsure" and "unavailable" both leave
+ * it unsorted, but one is the model hedging and the other is a server that
+ * never spoke, and telling a user the wrong one sends them debugging the wrong
+ * thing.
+ */
+export type SortOutcome = "sorted" | "unsure" | "unavailable" | "no-categories" | "off";
+
+export interface Classification {
+  verdict: Verdict;
+  outcome: SortOutcome;
+}
+
 /** Nothing decided. Returned wherever an engine fails to produce an answer. */
 export const NO_VERDICT: Verdict = { category: "", tags: [], probability: 0 };
 
@@ -76,8 +89,11 @@ export function buildSystemOneRequest(
   categories: readonly SortCategory[],
   tags: readonly SortCategory[]
 ): SystemOneRequest {
+  // A description is optional. Where one is missing the name stands in for it:
+  // these models match the clipping against the option's text, so sending an
+  // empty string is strictly worse than sending "DESIGN" twice.
   const criteria: Record<string, string> = {};
-  for (const item of categories) criteria[item.name] = item.description;
+  for (const item of categories) criteria[item.name] = item.description || item.name;
 
   const questions: Record<string, SystemOneQuestion> = {
     [CATEGORY_ID]: {
@@ -170,7 +186,9 @@ export function buildLlmMessages(
   categories: readonly SortCategory[],
   model: string
 ): LlmRequest {
-  const list = categories.map((item) => `- ${item.name}: ${item.description}`).join("\n");
+  const list = categories
+    .map((item) => (item.description ? `- ${item.name}: ${item.description}` : `- ${item.name}`))
+    .join("\n");
   return {
     model,
     messages: [

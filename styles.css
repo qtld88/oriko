@@ -2628,3 +2628,9 @@ body.is-mobile .pg-spacebar button:active {
     transform 180ms cubic-bezier(0.22, 0.9, 0.28, 1),
     box-shadow 180ms ease;
 }
+
+.oriko-clip-notice-sorted {
+  margin-top: 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-accent);
+}

@@ -11,7 +11,7 @@ import {
   verdictExtras,
   verdictSubfolder,
 } from "./core/classify";
-import type { Verdict } from "./core/classify";
+import type { SortOutcome, Verdict } from "./core/classify";
 import {
   ResolvedLink,
   amazonProduct,
@@ -225,7 +225,7 @@ export class CaptureService {
     // side costs no wall-clock time at all.
     const sorting = this.classifier
       .classify(clippingState(link.title, link.description, link.url))
-      .catch(() => NO_VERDICT);
+      .catch(() => ({ verdict: NO_VERDICT, outcome: "unavailable" as SortOutcome }));
     const archived = await this.archiver.archiveResolved(
       link.url,
       link.media,
@@ -253,8 +253,8 @@ export class CaptureService {
     }
 
     this.report(0.85, "Creating clipping…");
-    const verdict = await sorting;
-    const file = await this.createNote({ ...link, media }, undefined, grid, verdict);
+    const sorted = await sorting;
+    const file = await this.createNote({ ...link, media }, undefined, grid, sorted.verdict);
     if (!file) {
       this.onProgress?.(null);
       return;
