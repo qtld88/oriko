@@ -92,6 +92,11 @@ export class Classifier {
       if (first.verdict.category) return { verdict: first.verdict, outcome: "sorted" };
     }
 
+    // No threshold here, and none available. The chat engine reports no
+    // calibrated probability of its own, and a model asked how sure it is
+    // answers with a number it made up, so gating on that would be theatre.
+    // Only the decision endpoint can genuinely say it does not know, which is
+    // the strongest reason to configure one rather than run on chat alone.
     if (hasLlm) {
       const second = await withTimeout(
         this.askLlm(state, categories),
