@@ -29,6 +29,7 @@ import {
 } from "./core/shared-config";
 import { describeFiles } from "./core/media-refs";
 import { installRepair } from "./repair";
+import { Classifier } from "./classifier";
 import { sharedHttpUrl } from "./core/resolve";
 import { sharedClipGrid } from "./core/spaces";
 import { ORIKO_ICON_ID, ORIKO_ICON_SVG } from "./core/icon";
@@ -81,7 +82,8 @@ export default class OrikoPlugin extends Plugin {
       this.app,
       () => this.settings,
       this.archiver,
-      this.index
+      this.index,
+      new Classifier(() => this.settings)
     );
 
     this.registerView(
