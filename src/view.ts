@@ -1590,6 +1590,7 @@ export class OrikoView extends ItemView {
       filter: this.activeFilter(),
       hasSystem: this.onDisk(),
       canExport: this.onDisk() || canShareFiles(navigator),
+      unsortedCount: this.plugin.sorter.candidates().length,
       // Every row runs the method its context-menu equivalent runs. The two
       // surfaces list different things; neither reimplements the work.
       actions: {
@@ -1613,6 +1614,7 @@ export class OrikoView extends ItemView {
         clearFilters: () => this.setFilter(emptyFilter()),
         clip: () => void this.plugin.clipFromClipboard(),
         archiveAll: () => this.plugin.archiveAllMedia(),
+        sortUnsorted: () => void this.plugin.sorter.sortAll(),
         selectAll: () => this.grid?.selectAll(),
         resetZoom: () => this.grid?.resetView(),
       },

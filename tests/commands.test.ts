@@ -27,6 +27,7 @@ const actions = {
   clearFilters: noop,
   clip: noop,
   archiveAll: noop,
+  sortUnsorted: noop,
   selectAll: noop,
   resetZoom: noop,
 };
@@ -49,6 +50,7 @@ function context(over: Partial<PaletteContext> = {}): PaletteContext {
     filter: emptyFilter(),
     hasSystem: true,
     canExport: true,
+    unsortedCount: 0,
     actions,
     ...over,
   };
@@ -425,5 +427,27 @@ describe("facetValueCommands", () => {
 
   it("offers nothing for a facet the wall carries no values for", () => {
     expect(values(context())).toEqual([]);
+  });
+});
+
+describe("sort unsorted row", () => {
+  it("is offered with the count while clippings wait", () => {
+    const row = find(context({ unsortedCount: 12 }), "capture:sort-unsorted");
+    expect(row?.label).toBe("Sort unsorted");
+    expect(row?.detail).toBe("12");
+  });
+
+  it("is not offered when nothing waits", () => {
+    expect(ids(context())).not.toContain("capture:sort-unsorted");
+  });
+
+  it("runs the sweep", () => {
+    let ran = false;
+    const row = find(
+      context({ unsortedCount: 1, actions: { ...actions, sortUnsorted: () => (ran = true) } }),
+      "capture:sort-unsorted"
+    );
+    row?.run?.();
+    expect(ran).toBe(true);
   });
 });

@@ -85,6 +85,7 @@ export interface PaletteActions {
   clearFilters(): void;
   clip(): void;
   archiveAll(): void;
+  sortUnsorted(): void;
   selectAll(): void;
   resetZoom(): void;
 }
@@ -117,6 +118,8 @@ export interface PaletteContext {
    * somewhere to put it.
    */
   canExport: boolean;
+  /** Clippings marked `unsorted: true`. Zero hides the row. */
+  unsortedCount: number;
   actions: PaletteActions;
 }
 
@@ -464,7 +467,25 @@ export function facetValueCommands(context: PaletteContext): PaletteCommand[] {
 function captureCommands(context: PaletteContext): PaletteCommand[] {
   const { actions } = context;
 
+  // Only while there is a pile: a row that would find nothing to sort is a
+  // row that should not have survived the query.
+  const sort: PaletteCommand[] =
+    context.unsortedCount > 0
+      ? [
+          {
+            id: "capture:sort-unsorted",
+            label: "Sort unsorted",
+            icon: "wand-sparkles",
+            section: "Capture",
+            detail: String(context.unsortedCount),
+            keywords: "classify categories organise organize file queue pile",
+            run: () => actions.sortUnsorted(),
+          },
+        ]
+      : [];
+
   return [
+    ...sort,
     {
       id: "capture:clip",
       label: "Clip from clipboard",
