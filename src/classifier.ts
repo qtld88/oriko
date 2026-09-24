@@ -3,6 +3,7 @@ import {
   NO_VERDICT,
   buildLlmMessages,
   buildSystemOneRequest,
+  hasEngine,
   readLlmResponse,
   readSystemOneResponse,
   usableCategories,
@@ -54,6 +55,15 @@ function mergeTags(first: readonly string[], second: readonly string[]): string[
   return out;
 }
 
+export interface ClassifyOptions {
+  /**
+   * Skips the autoSort switch. That switch governs capture. Someone who
+   * launches the sweep, or turns on sorting arrivals, has already asked for
+   * sorting.
+   */
+  ignoreSwitch?: boolean;
+}
+
 export class Classifier {
   constructor(private settings: () => OrikoSettings) {}
 
@@ -63,9 +73,9 @@ export class Classifier {
    * that never replied come out the same way here, which is what makes a local
    * sidecar usable from a phone that cannot reach it.
    */
-  async classify(state: string): Promise<Classification> {
+  async classify(state: string, options: ClassifyOptions = {}): Promise<Classification> {
     const s = this.settings();
-    if (!s.autoSort) return { verdict: NO_VERDICT, outcome: "off" };
+    if (!s.autoSort && !options.ignoreSwitch) return { verdict: NO_VERDICT, outcome: "off" };
 
     const categories = usableCategories(s.sortCategories);
     // Declaring nothing is the commonest reason a clipping comes back
@@ -81,10 +91,11 @@ export class Classifier {
     // nothing here to read, so nothing here to decide.
     if (!state.trim()) return { verdict: NO_VERDICT, outcome: "no-text" };
 
+    // Reached only once categories and text are both there, so this means
+    // exactly "nothing on this device to ask". The clip is queued for a
+    // device that has an engine.
+    if (!hasEngine(s)) return { verdict: NO_VERDICT, outcome: "no-engine" };
     const hasLlm = Boolean(s.sortLlmBaseUrl && s.sortLlmModel);
-    if (!s.sortEndpoint && !hasLlm) {
-      return { verdict: NO_VERDICT, outcome: "unavailable" };
-    }
 
     let reached = false;
     let carried: Verdict = NO_VERDICT;

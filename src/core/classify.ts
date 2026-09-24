@@ -37,12 +37,17 @@ export interface Verdict {
  * "fallback" is the model hedging on a clipping whose owner named a place for
  * those. It is its own outcome so the notice can say the filing was a default
  * and not a decision.
+ *
+ * "no-engine" is a device with categories and text but nothing to ask: a phone
+ * leaving the clip for the desktop's sweep. It is not a fault, and reporting
+ * it as "unavailable" made it read like one.
  */
 export type SortOutcome =
   | "sorted"
   | "fallback"
   | "unsure"
   | "unavailable"
+  | "no-engine"
   | "no-categories"
   | "no-text"
   | "off";
@@ -71,6 +76,19 @@ export function usableCategories(list: readonly SortCategory[]): SortCategory[] 
     out.push({ name, description: item.description.trim() });
   }
   return out;
+}
+
+/**
+ * Whether this device has anything to ask. Endpoints are per device, so this
+ * is a fact about the machine and not about the vault: the desktop has its
+ * localhost sidecar, the phone may have nothing at all.
+ */
+export function hasEngine(settings: {
+  sortEndpoint: string;
+  sortLlmBaseUrl: string;
+  sortLlmModel: string;
+}): boolean {
+  return Boolean(settings.sortEndpoint || (settings.sortLlmBaseUrl && settings.sortLlmModel));
 }
 
 interface SystemOneQuestion {

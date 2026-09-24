@@ -80,6 +80,8 @@ function sortingLine(outcome: SortOutcome, category: string): string {
       return "Left unsorted: nothing was certain enough";
     case "unavailable":
       return "Left unsorted: no sorting endpoint answered";
+    case "no-engine":
+      return "Left unsorted: no engine on this device, sort it from your desktop";
     case "no-categories":
       return "Left unsorted: no categories set in Oriko settings";
     case "no-text":

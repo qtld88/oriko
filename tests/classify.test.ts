@@ -4,6 +4,7 @@ import {
   buildSystemOneRequest,
   clippingState,
   destinationFields,
+  hasEngine,
   readLlmResponse,
   readSystemOneResponse,
   usableCategories,
@@ -402,7 +403,7 @@ describe("withFallback", () => {
     expect(withFallback(answered("unsure"), "MISC", list).verdict.category).toBe("MISC");
   });
 
-  it.each(["unavailable", "no-text", "no-categories", "off"] as const)(
+  it.each(["unavailable", "no-engine", "no-text", "no-categories", "off"] as const)(
     "does not hide a %s outcome inside the fallback",
     (outcome) => {
       const result = withFallback(answered(outcome), "MISC", MISC_LIST);
@@ -457,5 +458,27 @@ describe("destinationFields", () => {
       categories: ['Say "hi"'],
       grid: 'Say "hi"',
     });
+  });
+});
+
+describe("hasEngine", () => {
+  const none = { sortEndpoint: "", sortLlmBaseUrl: "", sortLlmModel: "" };
+
+  it("is false for a device with nothing configured", () => {
+    expect(hasEngine(none)).toBe(false);
+  });
+
+  it("is true with a decision endpoint alone", () => {
+    expect(hasEngine({ ...none, sortEndpoint: "http://localhost:8765/decide" })).toBe(true);
+  });
+
+  it("is true with a language model base URL and a model", () => {
+    expect(
+      hasEngine({ ...none, sortLlmBaseUrl: "https://api.openai.com/v1", sortLlmModel: "gpt-4o-mini" })
+    ).toBe(true);
+  });
+
+  it("is false with a base URL but no model, which cannot be asked anything", () => {
+    expect(hasEngine({ ...none, sortLlmBaseUrl: "https://api.openai.com/v1" })).toBe(false);
   });
 });
