@@ -106,6 +106,8 @@ export interface OrikoSettings {
   sortLlmApiKey: string;
   /** The winning option's probability must reach this. Not confidence. */
   sortThreshold: number;
+  /** A declared category for clippings the model would not commit on. "" leaves them unsorted. */
+  sortFallback: string;
 }
 
 export const DEFAULT_SETTINGS: OrikoSettings = {
@@ -141,4 +143,5 @@ export const DEFAULT_SETTINGS: OrikoSettings = {
   sortLlmModel: "",
   sortLlmApiKey: "",
   sortThreshold: 0.6,
+  sortFallback: "",
 };

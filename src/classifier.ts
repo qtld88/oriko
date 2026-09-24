@@ -6,6 +6,7 @@ import {
   readLlmResponse,
   readSystemOneResponse,
   usableCategories,
+  withFallback,
 } from "./core/classify";
 import type { Classification, SortCategory, Verdict } from "./core/classify";
 import type { OrikoSettings } from "./core/settings";
@@ -121,7 +122,11 @@ export class Classifier {
       }
     }
 
-    return { verdict: carried, outcome: reached ? "unsure" : "unavailable" };
+    return withFallback(
+      { verdict: carried, outcome: reached ? "unsure" : "unavailable" },
+      s.sortFallback,
+      categories
+    );
   }
 
   private async askSystemOne(

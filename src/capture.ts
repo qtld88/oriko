@@ -74,6 +74,8 @@ function sortingLine(outcome: SortOutcome, category: string): string {
   switch (outcome) {
     case "sorted":
       return `Sorted into ${category}`;
+    case "fallback":
+      return `Filed under ${category}: nothing was certain enough`;
     case "unsure":
       return "Left unsorted: nothing was certain enough";
     case "unavailable":

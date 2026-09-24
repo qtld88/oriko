@@ -1,6 +1,7 @@
 import { AbstractInputSuggest, App, PluginSettingTab, Setting } from "obsidian";
 import type { SettingDefinitionItem } from "obsidian";
 import { slotCandidates, surveyProperties } from "./core/facet-catalog";
+import { usableCategories } from "./core/classify";
 import { facetLabel } from "./core/filter";
 import { OrikoView, VIEW_TYPE_GRID } from "./view";
 import type OrikoPlugin from "./main";
@@ -241,6 +242,22 @@ export class OrikoSettingTab extends PluginSettingTab {
     };
   }
 
+  /**
+   * The categories as they stand when the tab is drawn. A name edited since
+   * then only shows up on the next draw, which is why the stored choice is kept
+   * in the list when it no longer matches: showing another option in its place
+   * would read as though the setting had changed.
+   */
+  private fallbackOptions(): Record<string, string> {
+    const { sortCategories, sortFallback } = this.plugin.settings;
+    const options: Record<string, string> = { "": "Leave them unsorted" };
+    for (const item of usableCategories(sortCategories)) options[item.name] = item.name;
+    if (sortFallback && !(sortFallback in options)) {
+      options[sortFallback] = `${sortFallback} (no longer a category)`;
+    }
+    return options;
+  }
+
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [
       {
@@ -394,6 +411,15 @@ export class OrikoSettingTab extends PluginSettingTab {
                 grid: "An Oriko grid of the same name",
                 folder: "An Oriko folder of the same name",
               },
+            },
+          },
+          {
+            name: "When the model is unsure, file under",
+            desc: "A category for clippings the model answered on but would not commit to, such as MISC. It only applies when a model actually replied: an endpoint that never answered still leaves the clipping unsorted, so a broken setup stays visible.",
+            control: {
+              type: "dropdown",
+              key: "sortFallback",
+              options: this.fallbackOptions(),
             },
           },
           {

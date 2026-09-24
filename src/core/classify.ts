@@ -33,9 +33,14 @@ export interface Verdict {
  * they are not the same thing: the model hedged, a server never spoke, no
  * category was ever declared, or the page offered no text to read. Telling a
  * user the wrong one sends them debugging the wrong thing.
+ *
+ * "fallback" is the model hedging on a clipping whose owner named a place for
+ * those. It is its own outcome so the notice can say the filing was a default
+ * and not a decision.
  */
 export type SortOutcome =
   | "sorted"
+  | "fallback"
   | "unsure"
   | "unavailable"
   | "no-categories"
@@ -253,6 +258,34 @@ export function readLlmResponse(text: string, categories: readonly SortCategory[
   // keeps "did an engine answer" readable at the call site without inventing a
   // number that looks measured.
   return { category, tags, probability: category ? 1 : 0 };
+}
+
+/**
+ * Files a hedged clipping under the category the user picked for those.
+ *
+ * Only "unsure" qualifies: a model that answered and would not commit. The
+ * other unsorted outcomes are not hedging, and hiding them in a folder would
+ * hide what is actually wrong. A server that never answered filed every clip
+ * under MISC would look like a working setup with a lot of miscellany.
+ *
+ * The fallback is checked against the declared list on every clip, not when
+ * the setting is saved. A category renamed or deleted afterwards leaves the
+ * setting pointing at nothing, and a clip must not be filed into a folder
+ * the user no longer has a category for.
+ */
+export function withFallback(
+  result: Classification,
+  fallback: string,
+  categories: readonly SortCategory[]
+): Classification {
+  if (result.outcome !== "unsure") return result;
+  const wanted = fallback.trim();
+  const declared = usableCategories(categories).find((item) => item.name === wanted);
+  if (!declared) return result;
+  return {
+    verdict: { ...result.verdict, category: declared.name, probability: 0 },
+    outcome: "fallback",
+  };
 }
 
 /** Extra frontmatter for a note, merged by buildNote in ./resolve.ts. */

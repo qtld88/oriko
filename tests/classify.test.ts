@@ -8,8 +8,9 @@ import {
   usableCategories,
   verdictExtras,
   verdictSubfolder,
+  withFallback,
 } from "../src/core/classify";
-import type { SortCategory } from "../src/core/classify";
+import type { Classification, SortCategory, SortOutcome } from "../src/core/classify";
 
 const CATEGORIES: SortCategory[] = [
   { name: "DESIGN", description: "graphics, typography, objects" },
@@ -358,5 +359,62 @@ describe("clippingState", () => {
     );
     expect(state).not.toContain("Threads");
     expect(state).toContain("gouvernement");
+  });
+});
+
+describe("withFallback", () => {
+  const MISC_LIST: SortCategory[] = [...CATEGORIES, { name: "MISC", description: "anything else" }];
+  const answered = (outcome: SortOutcome, tags: string[] = []): Classification => ({
+    verdict: { category: "", tags, probability: 0 },
+    outcome,
+  });
+
+  it("files an unsure clipping under the fallback, and says it was the fallback", () => {
+    const result = withFallback(answered("unsure"), "MISC", MISC_LIST);
+    expect(result.verdict.category).toBe("MISC");
+    expect(result.outcome).toBe("fallback");
+  });
+
+  it("keeps the tags the engine did agree on", () => {
+    const result = withFallback(answered("unsure", ["lamp"]), "MISC", MISC_LIST);
+    expect(result.verdict.tags).toEqual(["lamp"]);
+  });
+
+  it("reports no probability, because nothing measured this choice", () => {
+    expect(withFallback(answered("unsure"), "MISC", MISC_LIST).verdict.probability).toBe(0);
+  });
+
+  it("leaves an unsure clipping unsorted when no fallback is chosen", () => {
+    const result = withFallback(answered("unsure"), "", MISC_LIST);
+    expect(result.verdict.category).toBe("");
+    expect(result.outcome).toBe("unsure");
+  });
+
+  it("ignores a fallback that is no longer declared, as after a rename", () => {
+    const result = withFallback(answered("unsure"), "MISC", CATEGORIES);
+    expect(result.verdict.category).toBe("");
+    expect(result.outcome).toBe("unsure");
+  });
+
+  it("matches the fallback through the same trimming the declarations get", () => {
+    const list = [{ name: " MISC ", description: "" }];
+    expect(withFallback(answered("unsure"), "MISC", list).verdict.category).toBe("MISC");
+  });
+
+  it.each(["unavailable", "no-text", "no-categories", "off"] as const)(
+    "does not hide a %s outcome inside the fallback",
+    (outcome) => {
+      const result = withFallback(answered(outcome), "MISC", MISC_LIST);
+      expect(result.verdict.category).toBe("");
+      expect(result.outcome).toBe(outcome);
+    }
+  );
+
+  it("leaves a sorted clipping exactly as it was", () => {
+    const sorted: Classification = {
+      verdict: { category: "DESIGN", tags: [], probability: 0.9 },
+      outcome: "sorted",
+    };
+    expect(withFallback(sorted, "MISC", MISC_LIST)).toEqual(sorted);
   });
 });
