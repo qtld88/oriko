@@ -3,6 +3,7 @@ import {
   buildLlmMessages,
   buildSystemOneRequest,
   clippingState,
+  destinationFields,
   readLlmResponse,
   readSystemOneResponse,
   usableCategories,
@@ -10,7 +11,7 @@ import {
   verdictSubfolder,
   withFallback,
 } from "../src/core/classify";
-import type { Classification, SortCategory, SortOutcome } from "../src/core/classify";
+import type { Classification, SortCategory, SortOutcome, Verdict } from "../src/core/classify";
 
 const CATEGORIES: SortCategory[] = [
   { name: "DESIGN", description: "graphics, typography, objects" },
@@ -416,5 +417,45 @@ describe("withFallback", () => {
       outcome: "sorted",
     };
     expect(withFallback(sorted, "MISC", MISC_LIST)).toEqual(sorted);
+  });
+});
+
+describe("destinationFields", () => {
+  const decided = (category: string): Verdict => ({ category, tags: [], probability: 0.9 });
+
+  it("writes only the categories for the property destination", () => {
+    expect(destinationFields(decided("DESIGN"), "property")).toEqual({ categories: ["DESIGN"] });
+  });
+
+  it("writes only the categories for a subfolder: the move is the destination", () => {
+    expect(destinationFields(decided("DESIGN"), "subfolder")).toEqual({ categories: ["DESIGN"] });
+  });
+
+  it("adds a grid of the same name for the grid destination", () => {
+    expect(destinationFields(decided("DESIGN"), "grid")).toEqual({
+      categories: ["DESIGN"],
+      grid: "DESIGN",
+    });
+  });
+
+  it("adds a folder of the same name for the folder destination", () => {
+    expect(destinationFields(decided("DESIGN"), "folder")).toEqual({
+      categories: ["DESIGN"],
+      folder: "DESIGN",
+    });
+  });
+
+  it.each(["property", "subfolder", "grid", "folder"] as const)(
+    "decides nothing for an undecided verdict, even with the %s destination",
+    (destination) => {
+      expect(destinationFields(decided(""), destination)).toEqual({ categories: [] });
+    }
+  );
+
+  it("returns a name with a quote raw, leaving the escaping to whoever writes YAML", () => {
+    expect(destinationFields(decided('Say "hi"'), "grid")).toEqual({
+      categories: ['Say "hi"'],
+      grid: 'Say "hi"',
+    });
   });
 });

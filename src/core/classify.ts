@@ -300,6 +300,29 @@ function yamlString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ")}"`;
 }
 
+/** The keys a decided category writes, whatever form they end up in. */
+export interface DestinationFields {
+  categories: string[];
+  grid?: string;
+  folder?: string;
+}
+
+/**
+ * The destination rules, once. A new note gets them as YAML lines through
+ * verdictExtras; a note the sweep sorts later gets them as a frontmatter
+ * patch through ./unsorted.ts. Values are raw: escaping is the writer's job.
+ */
+export function destinationFields(
+  verdict: Verdict,
+  destination: SortDestination
+): DestinationFields {
+  if (!verdict.category) return { categories: [] };
+  const fields: DestinationFields = { categories: [verdict.category] };
+  if (destination === "grid") fields.grid = verdict.category;
+  if (destination === "folder") fields.folder = verdict.category;
+  return fields;
+}
+
 /**
  * `categories:` is written whatever the destination, so changing the
  * destination setting later changes where new clippings go without stranding
@@ -307,14 +330,16 @@ function yamlString(value: string): string {
  *
  * An undecided clipping gets `unsorted: true` and no category. Not `status:`,
  * which Oriko already uses for read state with an "unread" default: a second
- * meaning on that key would corrupt the facet built on it.
+ * meaning on that key would corrupt the facet built on it. The marker is also
+ * the queue the sweep drains, see ./unsorted.ts.
  */
 export function verdictExtras(verdict: Verdict, destination: SortDestination): NoteExtras {
   if (!verdict.category) return { lines: ["unsorted: true"], tags: verdict.tags };
 
-  const lines = ["categories:", `  - ${yamlString(verdict.category)}`];
-  if (destination === "grid") lines.push(`grid: ${yamlString(verdict.category)}`);
-  if (destination === "folder") lines.push(`folder: ${yamlString(verdict.category)}`);
+  const fields = destinationFields(verdict, destination);
+  const lines = ["categories:", ...fields.categories.map((name) => `  - ${yamlString(name)}`)];
+  if (fields.grid !== undefined) lines.push(`grid: ${yamlString(fields.grid)}`);
+  if (fields.folder !== undefined) lines.push(`folder: ${yamlString(fields.folder)}`);
   return { lines, tags: verdict.tags };
 }
 
