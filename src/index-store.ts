@@ -1,13 +1,7 @@
 import type { App, TFile } from "obsidian";
-import { ClippingRecord, scanClipping, splitFrontmatter } from "./core/scan";
+import { ClippingRecord, isInFolder, scanClipping, splitFrontmatter } from "./core/scan";
 
-export function isInFolder(path: string, folder: string): boolean {
-  if (!path.toLowerCase().endsWith(".md")) return false;
-  const prefix = folder.endsWith("/") ? folder : folder + "/";
-  if (!path.startsWith(prefix)) return false;
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  return !name.startsWith("_");
-}
+export { isInFolder };
 
 export function sortRecords(records: ClippingRecord[]): ClippingRecord[] {
   return [...records].sort((a, b) => {
