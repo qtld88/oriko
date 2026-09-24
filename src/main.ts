@@ -10,6 +10,7 @@ import {
   normalizePath,
   parseYaml,
 } from "obsidian";
+import type { CachedMetadata } from "obsidian";
 import { buildDiagnostics } from "./core/diagnose";
 import { setToolOverrides } from "./convert";
 import { ArchiveService } from "./archive-service";
@@ -33,6 +34,7 @@ import {
 import { describeFiles } from "./core/media-refs";
 import { installRepair } from "./repair";
 import { Classifier } from "./classifier";
+import { SortService } from "./sort-service";
 import { sharedHttpUrl } from "./core/resolve";
 import { sharedClipGrid } from "./core/spaces";
 import { ORIKO_ICON_ID, ORIKO_ICON_SVG } from "./core/icon";
@@ -46,6 +48,7 @@ export default class OrikoPlugin extends Plugin {
   index!: ClippingIndex;
   archiver!: ArchiveService;
   capture!: CaptureService;
+  sorter!: SortService;
   /** The last shared file this device wrote, to recognise its own echo. */
   private wroteShared = "";
   /**
@@ -87,12 +90,16 @@ export default class OrikoPlugin extends Plugin {
       this.manifest.dir ?? `${this.app.vault.configDir}/plugins/oriko`
     );
     await this.archiver.loadCache();
+    const classifier = new Classifier(() => this.settings);
+    this.sorter = new SortService(this.app, () => this.settings, classifier);
+    this.register(() => this.sorter.stop());
     this.capture = new CaptureService(
       this.app,
       () => this.settings,
       this.archiver,
       this.index,
-      new Classifier(() => this.settings)
+      classifier,
+      this.sorter.attempts
     );
 
     this.registerView(
@@ -228,6 +235,14 @@ export default class OrikoPlugin extends Plugin {
       callback: () => this.archiveAllMedia(),
     });
 
+    // Any device can run it; one with no engine says so and stops. It also
+    // retries notes an engine was unsure of before, which the watcher does not.
+    this.addCommand({
+      id: "sort-unsorted",
+      name: "Sort unsorted clippings",
+      callback: () => void this.sorter.sortAll(),
+    });
+
     this.app.workspace.onLayoutReady(() => {
       void this.index.rebuild().then(() => {
         // Archiving runs behind the grid, which is already showing remote
@@ -235,6 +250,9 @@ export default class OrikoPlugin extends Plugin {
         if (this.settings.archiveOnCreate) {
           this.scheduleArchive(1500);
         }
+        // Obsidian stays open for days, so this alone would rarely fire. The
+        // watcher below catches what arrives after.
+        if (this.settings.sortArrivals) this.sorter.drainAll();
       });
     });
 
@@ -278,6 +296,14 @@ export default class OrikoPlugin extends Plugin {
       this.app.metadataCache.on("changed", (f: TFile) => {
         if (admits(f.path)) void this.index.handleModify(f);
       })
+    );
+
+    // Not gated by `admits`: an unsorted clip from another device is exactly
+    // the note that is not on the wall yet.
+    this.registerEvent(
+      this.app.metadataCache.on("changed", (f: TFile, _data: string, cache: CachedMetadata) =>
+        this.sorter.noticeChange(f, cache.frontmatter)
+      )
     );
   }
 

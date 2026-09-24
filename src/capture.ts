@@ -5,6 +5,7 @@ import { extensionForMime } from "./core/formats";
 import { fileableGrid } from "./core/spaces";
 import type { ClippingIndex } from "./index-store";
 import type { Classifier } from "./classifier";
+import type { AttemptLog } from "./core/unsorted";
 import {
   NO_VERDICT,
   clippingState,
@@ -107,7 +108,10 @@ export class CaptureService {
     private settings: () => OrikoSettings,
     private archiver: ArchiveService,
     private index: ClippingIndex,
-    private classifier: Classifier
+    private classifier: Classifier,
+    /** Told about every note written here, so the arrivals watcher does not
+        ask the same engine again seconds after it failed. */
+    private attempts: AttemptLog
   ) {}
 
   async captureFromClipboard(): Promise<void> {
@@ -300,6 +304,7 @@ export class CaptureService {
       this.onProgress?.(null);
       return;
     }
+    this.attempts.record(file.path, file.stat.mtime);
 
     // handleModify, not ingest: ingest updates the index silently, so the
     // grid was never told the clipping had landed.
