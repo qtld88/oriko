@@ -408,8 +408,13 @@ export class OrikoSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "autoSort" },
           },
           {
+            name: "Sort clippings that arrive unsorted",
+            desc: "Sorts clippings no engine decided: ones shared from a phone with no engine, and ones whose engine did not answer. Runs when Obsidian starts, whenever such a clipping appears, and once as soon as you turn this on. Each one's description, or its title, is sent to the endpoints below, as at capture.",
+            control: { type: "toggle", key: "sortArrivals" },
+          },
+          {
             name: "File sorted clippings by",
-            desc: "Where the decided category goes. The categories property is written either way, so changing this later does not strand what is already filed.",
+            desc: "Where the decided category goes. The categories property is written either way, so changing this later does not strand what is already filed. Shared with every device on this vault, like the categories and tags below.",
             control: {
               type: "dropdown",
               key: "sortDestination",
@@ -432,7 +437,7 @@ export class OrikoSettingTab extends PluginSettingTab {
           },
           {
             name: "Decision endpoint",
-            desc: "A model that answers typed questions: a Laya sidecar on your own machine, or a hosted service. Laya runs offline and sends nothing anywhere.",
+            desc: "A model that answers typed questions: a Laya sidecar on your own machine, or a hosted service. Laya runs offline and sends nothing anywhere. Set per device, like the keys and the certainty below: a phone can leave this empty and let the desktop sort.",
             control: { type: "text", key: "sortEndpoint" },
           },
           {
@@ -536,6 +541,14 @@ export class OrikoSettingTab extends PluginSettingTab {
         // a door you can only walk through once. Saving is what redraws the
         // open walls, density, corners and autoplay together.
         break;
+      }
+      case "sortArrivals": {
+        settings.sortArrivals = value === true;
+        // On means one thing: unsorted notes get sorted. Including the ones
+        // already waiting, not only the ones that arrive from now on.
+        return this.plugin.saveSettings().then(() => {
+          if (settings.sortArrivals) this.plugin.sorter.drainAll();
+        });
       }
       default:
         (settings as unknown as Record<string, unknown>)[key] = value;
