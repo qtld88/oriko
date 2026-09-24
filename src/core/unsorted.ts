@@ -1,5 +1,5 @@
 import { clippingState, destinationFields, verdictSubfolder } from "./classify";
-import type { SortDestination, Verdict } from "./classify";
+import type { SortDestination, SortOutcome, Verdict } from "./classify";
 import { isInFolder } from "./scan";
 
 /**
@@ -103,4 +103,62 @@ export function applySortPatch(frontmatter: Record<string, unknown>, patch: Sort
   const tags = tagList(frontmatter.tags);
   for (const tag of patch.tags) if (!tags.includes(tag)) tags.push(tag);
   frontmatter.tags = tags;
+}
+
+/**
+ * The last attempt on each note, by modification time. Held in memory: a note
+ * the engine was unsure of is not asked again until it changes, which a
+ * person's edit does, and a restart is a fair moment to try everything again.
+ */
+export class AttemptLog {
+  private attempts = new Map<string, number>();
+
+  record(path: string, mtime: number): void {
+    this.attempts.set(path, mtime);
+  }
+
+  /** False while the note is unchanged since it was last tried. */
+  due(path: string, mtime: number): boolean {
+    return this.attempts.get(path) !== mtime;
+  }
+}
+
+/** What happened to one note in a sweep. */
+export type NoteResult = "sorted" | "fallback" | "unsure" | "unreachable" | "noText" | "failed";
+
+export type SweepCounts = Record<NoteResult, number>;
+
+export function emptyCounts(): SweepCounts {
+  return { sorted: 0, fallback: 0, unsure: 0, unreachable: 0, noText: 0, failed: 0 };
+}
+
+/**
+ * One note's outcome as the summary counts it. "stop" is an outcome that is
+ * about the device, not the note: every other note would get the same answer.
+ */
+export function noteResult(outcome: SortOutcome): NoteResult | "stop" {
+  switch (outcome) {
+    case "sorted":
+    case "fallback":
+    case "unsure":
+      return outcome;
+    case "unavailable":
+      return "unreachable";
+    case "no-text":
+      return "noText";
+    default:
+      return "stop";
+  }
+}
+
+/** The run in one line: "31 sorted · 3 filed under MISC · 4 unsure · 2 unreachable". */
+export function sweepSummary(counts: SweepCounts, fallback: string): string {
+  const parts: string[] = [];
+  if (counts.sorted) parts.push(`${counts.sorted} sorted`);
+  if (counts.fallback) parts.push(`${counts.fallback} filed under ${fallback}`);
+  if (counts.unsure) parts.push(`${counts.unsure} unsure`);
+  if (counts.unreachable) parts.push(`${counts.unreachable} unreachable`);
+  if (counts.noText) parts.push(`${counts.noText} with no text`);
+  if (counts.failed) parts.push(`${counts.failed} failed`);
+  return parts.length > 0 ? parts.join(" · ") : "nothing sorted";
 }

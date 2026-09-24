@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { applySortPatch, handSorted, noteState, pickCandidates, sortPatch } from "../src/core/unsorted";
+import {
+  applySortPatch,
+  AttemptLog,
+  emptyCounts,
+  handSorted,
+  noteResult,
+  noteState,
+  pickCandidates,
+  sortPatch,
+  sweepSummary,
+} from "../src/core/unsorted";
 import type { Verdict } from "../src/core/classify";
 
 describe("pickCandidates", () => {
@@ -139,5 +149,65 @@ describe("applySortPatch", () => {
     const front: Record<string, unknown> = { tags: "clippings", unsorted: true };
     applySortPatch(front, { remove: ["unsorted"], set: {}, tags: [], subfolder: "" });
     expect(front.tags).toBe("clippings");
+  });
+});
+
+describe("AttemptLog", () => {
+  it("lets a note never tried through", () => {
+    expect(new AttemptLog().due("Clippings/a.md", 100)).toBe(true);
+  });
+
+  it("skips a note while its mtime matches the last attempt", () => {
+    const log = new AttemptLog();
+    log.record("Clippings/a.md", 100);
+    expect(log.due("Clippings/a.md", 100)).toBe(false);
+  });
+
+  it("retries a note once it has changed, as a person's edit does", () => {
+    const log = new AttemptLog();
+    log.record("Clippings/a.md", 100);
+    expect(log.due("Clippings/a.md", 250)).toBe(true);
+  });
+
+  it("skips a note capture registered, so a failed clip is not retried a moment later", () => {
+    const log = new AttemptLog();
+    // What CaptureService does right after vault.create.
+    log.record("Clippings/new.md", 300);
+    expect(log.due("Clippings/new.md", 300)).toBe(false);
+  });
+});
+
+describe("noteResult", () => {
+  it.each([
+    ["sorted", "sorted"],
+    ["fallback", "fallback"],
+    ["unsure", "unsure"],
+    ["unavailable", "unreachable"],
+    ["no-text", "noText"],
+  ] as const)("counts %s as %s", (outcome, result) => {
+    expect(noteResult(outcome)).toBe(result);
+  });
+
+  it.each(["no-categories", "no-engine", "off"] as const)("stops the run on %s", (outcome) => {
+    expect(noteResult(outcome)).toBe("stop");
+  });
+});
+
+describe("sweepSummary", () => {
+  it("names every count in one line", () => {
+    const counts = { ...emptyCounts(), sorted: 31, fallback: 3, unsure: 4, unreachable: 2 };
+    expect(sweepSummary(counts, "MISC")).toBe("31 sorted · 3 filed under MISC · 4 unsure · 2 unreachable");
+  });
+
+  it("omits the counts that are zero", () => {
+    expect(sweepSummary({ ...emptyCounts(), sorted: 2, failed: 1 }, "")).toBe("2 sorted · 1 failed");
+  });
+
+  it("names notes with no text to read", () => {
+    expect(sweepSummary({ ...emptyCounts(), noText: 5 }, "")).toBe("5 with no text");
+  });
+
+  it("says so when nothing happened at all", () => {
+    expect(sweepSummary(emptyCounts(), "")).toBe("nothing sorted");
   });
 });
