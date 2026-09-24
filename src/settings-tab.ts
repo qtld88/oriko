@@ -2,6 +2,7 @@ import { AbstractInputSuggest, App, PluginSettingTab, Setting } from "obsidian";
 import type { SettingDefinitionItem } from "obsidian";
 import { slotCandidates, surveyProperties } from "./core/facet-catalog";
 import { usableCategories } from "./core/classify";
+import type { SortCategory } from "./core/classify";
 import { facetLabel } from "./core/filter";
 import { OrikoView, VIEW_TYPE_GRID } from "./view";
 import type OrikoPlugin from "./main";
@@ -190,7 +191,10 @@ export class OrikoSettingTab extends PluginSettingTab {
     emptyState: string,
     addLabel: string
   ): SettingDefinitionItem {
-    const list = this.plugin.settings[key];
+    // Read afresh on every edit rather than captured: the lists are shared
+    // through _Oriko.md now, and a sync arriving while this tab is open swaps
+    // in a new array. An edit made to the old one would be saved nowhere.
+    const list = (): SortCategory[] => this.plugin.settings[key];
     const save = (): Promise<void> => this.plugin.saveSettings();
     const saveAndRedraw = (): void => {
       void save().then(() => this.update());
@@ -202,20 +206,20 @@ export class OrikoSettingTab extends PluginSettingTab {
       addItem: {
         name: addLabel,
         action: () => {
-          list.push({ name: "", description: "" });
+          list().push({ name: "", description: "" });
           saveAndRedraw();
         },
       },
       onDelete: (index: number) => {
-        list.splice(index, 1);
+        list().splice(index, 1);
         saveAndRedraw();
       },
       onReorder: (from: number, to: number) => {
-        const [moved] = list.splice(from, 1);
-        list.splice(to, 0, moved);
+        const [moved] = list().splice(from, 1);
+        list().splice(to, 0, moved);
         void save();
       },
-      items: list.map((entry, index) => ({
+      items: list().map((entry, index) => ({
         name: entry.name || addLabel,
         render: (setting: Setting) => {
           setting
@@ -224,7 +228,9 @@ export class OrikoSettingTab extends PluginSettingTab {
                 .setPlaceholder("Name")
                 .setValue(entry.name)
                 .onChange((value) => {
-                  list[index].name = value;
+                  const row = list()[index];
+                  if (!row) return;
+                  row.name = value;
                   void save();
                 })
             )
@@ -233,7 +239,9 @@ export class OrikoSettingTab extends PluginSettingTab {
                 .setPlaceholder("What belongs here")
                 .setValue(entry.description)
                 .onChange((value) => {
-                  list[index].description = value;
+                  const row = list()[index];
+                  if (!row) return;
+                  row.description = value;
                   void save();
                 })
             );

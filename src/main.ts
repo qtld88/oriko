@@ -448,14 +448,16 @@ export default class OrikoPlugin extends Plugin {
     // them, and rewriting an identical file for those is sync churn on every
     // device rather than a change to anything.
     if (body === this.wroteShared) return;
-    // Remembered so the modify event our own write raises can be told apart
-    // from one that arrived by sync.
-    this.wroteShared = body;
     const path = this.sharedPath();
     const folder = this.settings.clippingsFolder;
     // Adapter for the same reason syncShared gives: this can run at onload,
     // when the vault index cannot yet answer for the folder or the file.
+    // Checked before the body is remembered: a write that never happened must
+    // not make the next save think the file already says this.
     if (folder && !(await this.app.vault.adapter.exists(normalizePath(folder)))) return;
+    // Remembered so the modify event our own write raises can be told apart
+    // from one that arrived by sync.
+    this.wroteShared = body;
     await this.app.vault.adapter.write(path, body);
     if (withSort) this.sharedHasSort = true;
   }
