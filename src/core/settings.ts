@@ -108,6 +108,12 @@ export interface OrikoSettings {
   sortThreshold: number;
   /** A declared category for clippings the model would not commit on. "" leaves them unsorted. */
   sortFallback: string;
+  /**
+   * Drain the unsorted pile on this device: at launch, whenever a marked note
+   * arrives, and once when turned on. Local, because only a device with an
+   * engine can do it.
+   */
+  sortArrivals: boolean;
 }
 
 export const DEFAULT_SETTINGS: OrikoSettings = {
@@ -144,4 +150,5 @@ export const DEFAULT_SETTINGS: OrikoSettings = {
   sortLlmApiKey: "",
   sortThreshold: 0.6,
   sortFallback: "",
+  sortArrivals: false,
 };
