@@ -42,8 +42,15 @@ export class SortService {
   private running = false;
   private pending = new Set<string>();
   private timer = 0;
-  /** The watcher reports a missing engine once a session, not once per arrival. */
-  private warned = false;
+  /** Each watcher warning once a session, not once per arrival. By text, so
+      one kind of failure does not silence another. */
+  private warned = new Set<string>();
+  /**
+   * Renames, one at a time. Finding a free name and taking it are two steps
+   * with an await between them, and three workers filing two "Lamp.md" into
+   * the same category would otherwise both pick the same one.
+   */
+  private moves: Promise<void> = Promise.resolve();
 
   constructor(
     private app: App,
@@ -137,8 +144,8 @@ export class SortService {
   }
 
   private warnOnce(message: string): void {
-    if (this.warned) return;
-    this.warned = true;
+    if (this.warned.has(message)) return;
+    this.warned.add(message);
     new Notice(message);
   }
 
@@ -210,7 +217,11 @@ export class SortService {
     }
     // The frontmatter write is the commit point. A move that fails leaves a
     // sorted note where it was: untidy, not wrong.
-    if (patch.subfolder) await this.move(file, patch.subfolder).catch(() => {});
+    if (patch.subfolder) {
+      const moved = this.moves.then(() => this.move(file, patch.subfolder));
+      this.moves = moved.catch(() => {});
+      await this.moves;
+    }
     return result;
   }
 
