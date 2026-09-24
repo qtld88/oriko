@@ -21,8 +21,11 @@ import {
   LEGACY_SHARED_FILES,
   SHARED_FILE,
   extractShared,
+  hasSortKeys,
   isDefaultShared,
+  isDefaultSort,
   parseShared,
+  publishesSort,
   serializeShared,
   sharedOf,
   withShared,
@@ -45,6 +48,12 @@ export default class OrikoPlugin extends Plugin {
   capture!: CaptureService;
   /** The last shared file this device wrote, to recognise its own echo. */
   private wroteShared = "";
+  /**
+   * Whether the shared file, as this device last read or wrote it, carried the
+   * sort keys. Until it does, a device holding default sort values leaves them
+   * out, so it cannot publish an empty category list over the desktop's.
+   */
+  private sharedHasSort = false;
   private archiveTimer = 0;
 
   /**
@@ -385,7 +394,14 @@ export default class OrikoPlugin extends Plugin {
         this.wroteShared = body;
         const raw = extractShared(body);
         if (raw !== null) {
+          this.sharedHasSort = hasSortKeys(raw);
           this.settings = withShared(this.settings, parseShared(raw, sharedOf(this.settings)));
+          // The upgrade: a file written before sorting was shared, read by
+          // the device whose data.json still holds the categories. It
+          // publishes them now rather than at its next save.
+          if (!this.sharedHasSort && !isDefaultSort(sharedOf(this.settings))) {
+            await this.writeShared();
+          }
           return;
         }
       } catch {
@@ -425,7 +441,9 @@ export default class OrikoPlugin extends Plugin {
   }
 
   private async writeShared(): Promise<void> {
-    const body = serializeShared(sharedOf(this.settings));
+    const shared = sharedOf(this.settings);
+    const withSort = publishesSort(shared, this.sharedHasSort);
+    const body = serializeShared(shared, withSort);
     // saveSettings also runs for the device's own half, the tile size among
     // them, and rewriting an identical file for those is sync churn on every
     // device rather than a change to anything.
@@ -439,6 +457,7 @@ export default class OrikoPlugin extends Plugin {
     // when the vault index cannot yet answer for the folder or the file.
     if (folder && !(await this.app.vault.adapter.exists(normalizePath(folder)))) return;
     await this.app.vault.adapter.write(path, body);
+    if (withSort) this.sharedHasSort = true;
   }
 
   /**
@@ -459,6 +478,7 @@ export default class OrikoPlugin extends Plugin {
       if (body === this.wroteShared) return;
       const raw = extractShared(body);
       if (raw === null) return;
+      this.sharedHasSort = hasSortKeys(raw);
       this.settings = withShared(this.settings, parseShared(raw, sharedOf(this.settings)));
       // Now what is on disk, as far as this device knows, so the next save
       // does not write the same thing straight back at whoever sent it.
@@ -482,6 +502,10 @@ export default class OrikoPlugin extends Plugin {
     this.settings.filterProperties = [
       ...(this.settings.filterProperties ?? DEFAULT_SETTINGS.filterProperties),
     ];
+    // The declaration lists are pushed onto by the settings tab. The same
+    // copy, for the same reason as the grids above.
+    this.settings.sortCategories = [...(this.settings.sortCategories ?? [])];
+    this.settings.sortTags = [...(this.settings.sortTags ?? [])];
     // A stage that no longer exists, or a hand-edited data.json, lands on the
     // default rather than on a wall laid out to an undefined width.
     if (!isStage(this.settings.tileSize)) this.settings.tileSize = DEFAULT_SETTINGS.tileSize;
