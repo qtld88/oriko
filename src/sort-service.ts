@@ -14,8 +14,9 @@ import {
   pickCandidates,
   sortPatch,
   sweepSummary,
+  UNSORTED_KEY,
 } from "./core/unsorted";
-import type { NoteResult, SweepCounts } from "./core/unsorted";
+import type { NoteResult, SortPatch, SweepCounts } from "./core/unsorted";
 
 /**
  * Sorting what capture could not: the notes marked `unsorted: true`, on
@@ -206,15 +207,25 @@ export class SortService {
     if (result === "stop") return null;
     if (result !== "sorted" && result !== "fallback") return result;
 
-    const patch = sortPatch(frontmatter, classification.verdict, this.settings().sortDestination);
-    if (!patch) return "unsure";
+    const destination = this.settings().sortDestination;
+    if (!sortPatch(frontmatter, classification.verdict, destination)) return "unsure";
+    // Rebuilt from the frontmatter as it is now, not as it was before the
+    // engine was asked. A chat model can take thirty seconds, and a person who
+    // typed a category in the meantime has sorted the note by hand: their
+    // category stays, only the marker goes.
+    const written: { patch: SortPatch | null } = { patch: null };
     try {
-      await this.app.fileManager.processFrontMatter(file, (front: Record<string, unknown>) =>
-        applySortPatch(front, patch)
-      );
+      await this.app.fileManager.processFrontMatter(file, (front: Record<string, unknown>) => {
+        if (front[UNSORTED_KEY] !== true) return;
+        written.patch = sortPatch(front, classification.verdict, destination);
+        if (written.patch) applySortPatch(front, written.patch);
+      });
     } catch {
       return "failed";
     }
+    const patch = written.patch;
+    // The marker went while the engine was thinking: someone else sorted it.
+    if (!patch) return null;
     // The frontmatter write is the commit point. A move that fails leaves a
     // sorted note where it was: untidy, not wrong.
     if (patch.subfolder) {

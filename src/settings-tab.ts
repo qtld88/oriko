@@ -428,7 +428,7 @@ export class OrikoSettingTab extends PluginSettingTab {
           },
           {
             name: "When the model is unsure, file under",
-            desc: "A category for clippings the model answered on but would not commit to, such as MISC. It only applies when a model actually replied: an endpoint that never answered still leaves the clipping unsorted, so a broken setup stays visible.",
+            desc: "A category for clippings the model answered on but would not commit to, such as MISC. It only applies when a model actually replied: an endpoint that never answered still leaves the clipping unsorted, so a broken setup stays visible. Shared with every device on this vault.",
             control: {
               type: "dropdown",
               key: "sortFallback",
