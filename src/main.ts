@@ -6,6 +6,7 @@ import {
   addIcon,
   TAbstractFile,
   TFile,
+  TFolder,
   WorkspaceLeaf,
   normalizePath,
   parseYaml,
@@ -14,6 +15,8 @@ import { buildDiagnostics } from "./core/diagnose";
 import { setToolOverrides } from "./convert";
 import { ArchiveService } from "./archive-service";
 import { CaptureService } from "./capture";
+import { FolderPickerModal } from "./folder-picker";
+import { FormatService, describeSummary } from "./format-service";
 import { ClippingIndex } from "./index-store";
 import { OrikoSettings, DEFAULT_SETTINGS } from "./core/settings";
 import { isStage } from "./core/density";
@@ -42,6 +45,7 @@ export default class OrikoPlugin extends Plugin {
   index!: ClippingIndex;
   archiver!: ArchiveService;
   capture!: CaptureService;
+  format!: FormatService;
   /** The last shared file this device wrote, to recognise its own echo. */
   private wroteShared = "";
   private archiveTimer = 0;
@@ -78,6 +82,12 @@ export default class OrikoPlugin extends Plugin {
     );
     await this.archiver.loadCache();
     this.capture = new CaptureService(
+      this.app,
+      () => this.settings,
+      this.archiver,
+      this.index
+    );
+    this.format = new FormatService(
       this.app,
       () => this.settings,
       this.archiver,
@@ -204,6 +214,24 @@ export default class OrikoPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "format-folder",
+      name: "Format notes in a folder…",
+      callback: () => new FolderPickerModal(this.app, (folder) => void this.formatFolder(folder)).open(),
+    });
+
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!(file instanceof TFolder)) return;
+        menu.addItem((item) =>
+          item
+            .setTitle("Format notes with Oriko")
+            .setIcon(ORIKO_ICON_ID)
+            .onClick(() => void this.formatFolder(file))
+        );
+      })
+    );
+
+    this.addCommand({
       id: "archive-clipping-media",
       name: "Download all clipping media",
       callback: () => this.archiveAllMedia(),
@@ -302,6 +330,19 @@ export default class OrikoPlugin extends Plugin {
         );
       })();
     }).open();
+  }
+
+  /**
+   * Formats a folder of notes into clippings, then reports what it did. The
+   * run goes into the wall's history, so ⌘Z there takes the whole run back.
+   */
+  async formatFolder(folder: TFolder): Promise<void> {
+    new Notice(`Oriko: formatting ${folder.isRoot() ? "the vault" : folder.path}…`);
+    const result = await this.format.formatFolder(folder);
+    if (!result) return;
+    const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_GRID)[0];
+    if (result.undo && leaf?.view instanceof OrikoView) leaf.view.recordHistory(result.undo);
+    new Notice(describeSummary(result.summary), 10000);
   }
 
   /** Lifted out of its command so the grid's palette can call it too. */

@@ -574,6 +574,40 @@ export class ArchiveService {
     if (outcome) this.cache.mergeOutcome(outcome);
   }
 
+  /**
+   * Downloads one picture for a note being formatted and returns its vault
+   * path, or null. Keyed like every other archived asset, so a picture
+   * already on disk is not fetched a second time.
+   */
+  async archivePicture(url: string, source: string, alt = ""): Promise<string | null> {
+    return this.archiveOne({ key: normalizeUrl(url), url, kind: "image", alt }, source);
+  }
+
+  /**
+   * Downloads the picture a page publishes for itself, found the way
+   * resolvePageCover finds it and kept under the same key, so the tile and
+   * the note agree on which file it is.
+   */
+  async archivePagePicture(source: string, alt = ""): Promise<string | null> {
+    const key = normalizeUrl(source);
+    const known = knownHostThumbnail(source);
+    if (known) {
+      return this.archiveOne({ key, url: known.url, kind: "image", alt, fallbacks: known.fallbacks }, source);
+    }
+    const imageUrl = await this.fetchPageImage(source);
+    return imageUrl ? this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source) : null;
+  }
+
+  private async archiveOne(media: CanonicalMedia, source: string): Promise<string | null> {
+    const held = this.cache.get(media.key)?.file;
+    if (held && this.app.vault.getFileByPath(normalizePath(held))) return held;
+    await this.ensureFolder();
+    const [outcome] = await archiveAll([media], source, this.deps(), 1);
+    if (!outcome) return null;
+    this.cache.mergeOutcome(outcome);
+    return outcome.file ?? null;
+  }
+
   private async fetchPageImage(pageUrl: string): Promise<string | null> {
     try {
       const response = await requestUrl({ url: pageUrl, method: "GET", throw: false });

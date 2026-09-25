@@ -11,6 +11,7 @@ import {
   buildPastedImageNote,
   buildScanNote,
   cleanUrl,
+  clippingPathFor,
   directMediaKind,
   directMediaLink,
   fxApiUrl,
@@ -425,13 +426,11 @@ export class CaptureService {
       await this.app.vault.createFolder(folder).catch(() => {});
     }
 
-    const base = noteNameFor(link.title, link.url);
-    let path = normalizePath(`${folder}/${base}.md`);
-    let n = 2;
-    while (this.app.vault.getAbstractFileByPath(path)) {
-      path = normalizePath(`${folder}/${base} ${n}.md`);
-      n++;
-    }
+    const path = normalizePath(
+      clippingPathFor(folder, link.title, link.url, (p) =>
+        Boolean(this.app.vault.getAbstractFileByPath(normalizePath(p)))
+      )
+    );
 
     try {
       const grid = this.targetGrid(explicitGrid);
