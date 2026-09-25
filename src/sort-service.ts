@@ -238,7 +238,7 @@ export class SortService {
 
   /**
    * Safe for notes Oriko wrote: media are embedded from the vault root and
-   * `image:` is stored the same way, so nothing in the note is relative to
+   * `cover:` is stored the same way, so nothing in the note is relative to
    * where it lives. The same " 2" suffix on a collision as createNote.
    */
   private async move(file: TFile, subfolder: string): Promise<void> {

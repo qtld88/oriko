@@ -537,23 +537,19 @@ function today(): string {
 }
 
 /**
- * The picture a clipping is represented by outside the wall. Bases, Dataview
- * and the file explorer all read frontmatter and none of them read the body,
- * so an `![[…]]` embed is invisible to a card view however well the note
- * itself renders. The archived copy wins over the origin's url for the same
- * reason the body embeds it: that CDN link is signed and expires.
+ * The clipping's `cover:`, the one picture property in the vault. The wall
+ * reads it as an override, and Bases takes it as a card image, so the folder
+ * formatter and every note builder write the same key the same way: a bare
+ * vault path, which the scanner reads with str().
  *
- * Videos are skipped rather than linked. This is an image property, and a
- * card asked to render an mp4 shows nothing at all.
- *
- * The value is a wikilink because that is how Obsidian stores a link
- * property and what a cards view resolves. `cover:` stays a bare path: it is
- * the wall's own override, and the scanner reads it with str().
+ * Only an archived image qualifies. The origin's url is signed and expires,
+ * and as an override it would outrank the archived copy the wall finds later.
+ * A leading video leaves it empty too: an override pointing at the picture
+ * behind it would turn the tile into a still.
  */
 export function coverImageFor(media: readonly ResolvedMedia[]): string {
-  const image = media.find((item) => item.kind === "image");
-  if (!image) return "";
-  return image.localPath ? `[[${image.localPath}]]` : image.url;
+  const first = media[0];
+  return first?.kind === "image" && first.localPath ? first.localPath : "";
 }
 
 /** Matches the Web Clipper's frontmatter contract, which the vault treats as fixed. */
@@ -581,8 +577,8 @@ export function buildNote(
   lines.push(`description: ${yamlString(link.description)}`);
   // Always written, empty or not, so every clipping carries the same keys
   // and a cards view never has to cope with a missing property.
-  const image = coverImageFor(link.media);
-  lines.push(image ? `image: ${yamlString(image)}` : "image:");
+  const cover = coverImageFor(link.media);
+  lines.push(cover ? `cover: ${yamlString(cover)}` : "cover:");
   lines.push("tags:", '  - "clippings"');
   // Sorting's tags join the built-in one inside the same block, and its other
   // keys follow. Both are empty unless auto-sorting decided something.
@@ -631,7 +627,6 @@ export function buildScanNote(
     "published:",
     `created: ${created}`,
     "description:",
-    `image: ${yamlString(`[[${attachmentPath}]]`)}`,
     "tags:",
     '  - "clippings"',
     `cover: ${yamlString(attachmentPath)}`,
@@ -664,7 +659,6 @@ export function buildPastedImageNote(
     "published:",
     `created: ${created}`,
     "description:",
-    `image: ${yamlString(`[[${attachmentPath}]]`)}`,
     "tags:",
     '  - "clippings"',
     // A plain string: the scanner reads cover with str(), so a list here
