@@ -1,6 +1,8 @@
 import { AbstractInputSuggest, App, PluginSettingTab, Setting } from "obsidian";
 import type { SettingDefinitionItem } from "obsidian";
 import { slotCandidates, surveyProperties } from "./core/facet-catalog";
+import { usableCategories } from "./core/classify";
+import type { SortCategory } from "./core/classify";
 import { facetLabel } from "./core/filter";
 import { OrikoView, VIEW_TYPE_GRID } from "./view";
 import type OrikoPlugin from "./main";
@@ -174,6 +176,96 @@ export class OrikoSettingTab extends PluginSettingTab {
    * setControlValue below, which is where the byte-to-megabyte translation
    * and the folder-change side effects live.
    */
+  /**
+   * One row per declared category or tag, two fields each. Obsidian's own list
+   * control supplies the add, delete and drag-to-reorder affordances and lays
+   * itself out for a phone, which is where a lot of clipping happens.
+   *
+   * The description is not a label: it is what the model matches a clipping
+   * against, so it sits in the row beside the name rather than in the
+   * setting's own description.
+   */
+  private declarationList(
+    heading: string,
+    key: "sortCategories" | "sortTags",
+    emptyState: string,
+    addLabel: string
+  ): SettingDefinitionItem {
+    // Read afresh on every edit rather than captured: the lists are shared
+    // through _Oriko.md now, and a sync arriving while this tab is open swaps
+    // in a new array. An edit made to the old one would be saved nowhere.
+    const list = (): SortCategory[] => this.plugin.settings[key];
+    const save = (): Promise<void> => this.plugin.saveSettings();
+    const saveAndRedraw = (): void => {
+      void save().then(() => this.update());
+    };
+    return {
+      type: "list",
+      heading,
+      emptyState,
+      addItem: {
+        name: addLabel,
+        action: () => {
+          list().push({ name: "", description: "" });
+          saveAndRedraw();
+        },
+      },
+      onDelete: (index: number) => {
+        list().splice(index, 1);
+        saveAndRedraw();
+      },
+      onReorder: (from: number, to: number) => {
+        const [moved] = list().splice(from, 1);
+        list().splice(to, 0, moved);
+        void save();
+      },
+      items: list().map((entry, index) => ({
+        name: entry.name || addLabel,
+        render: (setting: Setting) => {
+          setting
+            .addText((text) =>
+              text
+                .setPlaceholder("Name")
+                .setValue(entry.name)
+                .onChange((value) => {
+                  const row = list()[index];
+                  if (!row) return;
+                  row.name = value;
+                  void save();
+                })
+            )
+            .addText((text) =>
+              text
+                .setPlaceholder("What belongs here")
+                .setValue(entry.description)
+                .onChange((value) => {
+                  const row = list()[index];
+                  if (!row) return;
+                  row.description = value;
+                  void save();
+                })
+            );
+        },
+      })),
+    };
+  }
+
+  /**
+   * The categories as they stand when the tab is drawn. A name edited since
+   * then only shows up on the next draw, which is why the stored choice is kept
+   * in the list when it no longer matches: showing another option in its place
+   * would read as though the setting had changed.
+   */
+  private fallbackOptions(): Record<string, string> {
+    const { sortCategories, sortFallback } = this.plugin.settings;
+    const options: Record<string, string> = { "": "Leave them unsorted" };
+    for (const item of usableCategories(sortCategories)) options[item.name] = item.name;
+    if (sortFallback && !(sortFallback in options)) {
+      options[sortFallback] = `${sortFallback} (no longer a category)`;
+    }
+    return options;
+  }
+
   getSettingDefinitions(): SettingDefinitionItem[] {
     return [
       {
@@ -308,6 +400,87 @@ export class OrikoSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
+        heading: "Auto-sorting",
+        items: [
+          {
+            name: "Sort new clippings",
+            desc: "Ask a model which of your categories a clipping belongs to, before the note is written. Nothing leaves your vault until you set an endpoint below.",
+            control: { type: "toggle", key: "autoSort" },
+          },
+          {
+            name: "Sort clippings that arrive unsorted",
+            desc: "Sorts clippings no engine decided: ones shared from a phone with no engine, and ones whose engine did not answer. Runs when Obsidian starts, whenever such a clipping appears, and once as soon as you turn this on. Each one's description, or its title, is sent to the endpoints below, as at capture.",
+            control: { type: "toggle", key: "sortArrivals" },
+          },
+          {
+            name: "File sorted clippings by",
+            desc: "Where the decided category goes. The categories property is written either way, so changing this later does not strand what is already filed. Shared with every device on this vault, like the categories and tags below.",
+            control: {
+              type: "dropdown",
+              key: "sortDestination",
+              options: {
+                property: "The categories property only",
+                subfolder: "A subfolder of the clippings folder",
+                grid: "An Oriko grid of the same name",
+                folder: "An Oriko folder of the same name",
+              },
+            },
+          },
+          {
+            name: "When the model is unsure, file under",
+            desc: "A category for clippings the model answered on but would not commit to, such as MISC. It only applies when a model actually replied: an endpoint that never answered still leaves the clipping unsorted, so a broken setup stays visible. Shared with every device on this vault.",
+            control: {
+              type: "dropdown",
+              key: "sortFallback",
+              options: this.fallbackOptions(),
+            },
+          },
+          {
+            name: "Decision endpoint",
+            desc: "A model that answers typed questions: a Laya sidecar on your own machine, or a hosted service. Laya runs offline and sends nothing anywhere. Set per device, like the keys and the certainty below: a phone can leave this empty and let the desktop sort.",
+            control: { type: "text", key: "sortEndpoint" },
+          },
+          {
+            name: "Decision endpoint key",
+            desc: "Leave empty for a local sidecar. Stored as plain text in this plugin's data file, as with every Obsidian plugin that holds a key.",
+            control: { type: "text", key: "sortApiKey" },
+          },
+          {
+            name: "Language model base URL",
+            desc: "Any OpenAI-compatible endpoint, asked when the decision endpoint is unsure or unreachable. It can invent tags, which the decision model cannot.",
+            control: { type: "text", key: "sortLlmBaseUrl" },
+          },
+          {
+            name: "Language model",
+            desc: "The model name to send, such as gpt-4o-mini or llama3.2.",
+            control: { type: "text", key: "sortLlmModel" },
+          },
+          {
+            name: "Language model key",
+            desc: "Stored as plain text in this plugin's data file.",
+            control: { type: "text", key: "sortLlmApiKey" },
+          },
+          {
+            name: "Certainty needed",
+            desc: "Between 0 and 1, and it only governs the decision endpoint, which reports a real probability per option. A language model reports none worth trusting, so its first answer is taken as it comes. Measure this on your own clippings before relying on it.",
+            control: { type: "number", key: "sortThreshold" },
+          },
+        ],
+      },
+      this.declarationList(
+        "Categories",
+        "sortCategories",
+        "No categories yet. Sorting stays off until there is at least one. Keep the list short: accuracy drops past about twenty options, and every description shares one budget of roughly 190 tokens.",
+        "Add category"
+      ),
+      this.declarationList(
+        "Tags",
+        "sortTags",
+        "No tags yet. The decision model can only answer yes or no about tags you name here; a language model invents its own.",
+        "Add tag"
+      ),
+      {
+        type: "group",
         heading: "Filter properties",
         items: [
           {
@@ -347,6 +520,14 @@ export class OrikoSettingTab extends PluginSettingTab {
         settings.maxBytes = Math.round(mb * 1048576);
         break;
       }
+      case "sortThreshold": {
+        const threshold = Number(value);
+        // Out-of-range silently ignored rather than clamped: a typed 6 is a
+        // slip, and clamping it to 1 would quietly stop every clip sorting.
+        if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) return;
+        settings.sortThreshold = threshold;
+        break;
+      }
       case "thumbnailWidth": {
         const width = Number(value);
         if (!Number.isFinite(width) || width < 100) return;
@@ -360,6 +541,14 @@ export class OrikoSettingTab extends PluginSettingTab {
         // a door you can only walk through once. Saving is what redraws the
         // open walls, density, corners and autoplay together.
         break;
+      }
+      case "sortArrivals": {
+        settings.sortArrivals = value === true;
+        // On means one thing: unsorted notes get sorted. Including the ones
+        // already waiting, not only the ones that arrive from now on.
+        return this.plugin.saveSettings().then(() => {
+          if (settings.sortArrivals) this.plugin.sorter.drainAll();
+        });
       }
       default:
         (settings as unknown as Record<string, unknown>)[key] = value;

@@ -4,6 +4,7 @@ import { readFolderWidth } from "./folders";
 import type { FolderSpace } from "./folders";
 import type { GridSpace } from "./spaces";
 import type { GridLook } from "./look";
+import type { SortCategory, SortDestination } from "./classify";
 
 /**
  * The half of the settings that describes the vault, and therefore belongs
@@ -35,6 +36,17 @@ export interface SharedConfig {
    */
   homeGridLook?: GridLook;
   filterProperties: string[];
+  /**
+   * How the vault is sorted. Categories, tags, destination and fallback
+   * describe the vault, so a phone that sorts on its own files into the same
+   * places the desktop does. Endpoints, keys and the threshold describe a
+   * machine and stay in data.json. Absent from a file written before
+   * deferred sorting, which reads as "keep this device's values", not "none".
+   */
+  sortCategories: SortCategory[];
+  sortTags: SortCategory[];
+  sortDestination: SortDestination;
+  sortFallback: string;
 }
 
 /*
@@ -58,6 +70,8 @@ export const SHARED_FILE = "_Oriko.md";
  * newest first: the pre-rename .md, then the .json that preceded it.
  */
 export const LEGACY_SHARED_FILES = ["_Power Grid.md", "_Power Grid.json"];
+/** The keys that arrived after the file's own format did. See publishesSort. */
+export const SORT_KEYS = ["sortCategories", "sortTags", "sortDestination", "sortFallback"] as const;
 
 export function sharedOf(settings: OrikoSettings): SharedConfig {
   // Copied, not referenced. The caller pushes grids onto this list, and
@@ -70,6 +84,10 @@ export function sharedOf(settings: OrikoSettings): SharedConfig {
     homeGridIcon: settings.homeGridIcon,
     homeGridLook: settings.homeGridLook,
     filterProperties: [...settings.filterProperties],
+    sortCategories: settings.sortCategories.map((item) => ({ ...item })),
+    sortTags: settings.sortTags.map((item) => ({ ...item })),
+    sortDestination: settings.sortDestination,
+    sortFallback: settings.sortFallback,
   };
 }
 
@@ -86,6 +104,16 @@ export function sharedOf(settings: OrikoSettings): SharedConfig {
  * told. The one with the grids publishes them, and if no device has any
  * there is nothing to lose by there being no file yet.
  */
+/** Whether the sorting half holds nothing but the defaults. */
+export function isDefaultSort(shared: SharedConfig): boolean {
+  return (
+    shared.sortCategories.length === 0 &&
+    shared.sortTags.length === 0 &&
+    shared.sortDestination === "property" &&
+    shared.sortFallback === ""
+  );
+}
+
 export function isDefaultShared(shared: SharedConfig): boolean {
   const base = sharedOf(DEFAULT_SETTINGS);
   return (
@@ -95,8 +123,28 @@ export function isDefaultShared(shared: SharedConfig): boolean {
     shared.homeGridIcon === base.homeGridIcon &&
     shared.homeGridLook === undefined &&
     shared.filterProperties.length === base.filterProperties.length &&
-    shared.filterProperties.every((p, i) => p === base.filterProperties[i])
+    shared.filterProperties.every((p, i) => p === base.filterProperties[i]) &&
+    isDefaultSort(shared)
   );
+}
+
+/** Whether a file, as parsed, already carries any of the sort keys. */
+export function hasSortKeys(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  return SORT_KEYS.some((key) => key in raw);
+}
+
+/**
+ * Whether this device writes the sort keys.
+ *
+ * isDefaultShared keeps a default device from writing the file at all, but a
+ * phone with a grid of its own writes it anyway, and would publish empty sort
+ * values that the desktop, reading a present key, would adopt. So the keys go
+ * in only from a device holding real values, or once the file already has
+ * them: after that a deliberate clear on any device still propagates.
+ */
+export function publishesSort(shared: SharedConfig, fileHasSort: boolean): boolean {
+  return fileHasSort || !isDefaultSort(shared);
 }
 
 export function withShared(
@@ -155,6 +203,29 @@ function strings(value: unknown): string[] | null {
 }
 
 /**
+ * A declaration list as the file spells it, or null to keep this device's.
+ * Rows with a string name are kept even when blank: the settings list is
+ * edited row by row, and a half-typed row is not a broken file.
+ */
+function readDeclarations(value: unknown): SortCategory[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: SortCategory[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const { name, description } = item as Partial<SortCategory>;
+    if (typeof name !== "string") continue;
+    out.push({ name, description: typeof description === "string" ? description : "" });
+  }
+  return out;
+}
+
+const DESTINATIONS: readonly SortDestination[] = ["property", "subfolder", "grid", "folder"];
+
+function readDestination(value: unknown): SortDestination | null {
+  return DESTINATIONS.find((destination) => destination === value) ?? null;
+}
+
+/**
  * Reads what a shared file claims, field by field, keeping whatever this
  * device already had wherever the file does not say something usable.
  *
@@ -187,6 +258,15 @@ export function parseShared(raw: unknown, fallback: SharedConfig): SharedConfig 
         : fallback.homeGridIcon,
     homeGridLook: readLook(from.homeGridLook),
     filterProperties: properties ?? fallback.filterProperties,
+    // Per key, and silence keeps this device's value. Unlike folders, these
+    // keys arrived after the file's format did, so an older file saying
+    // nothing is not the vault saying "none": reading it that way would wipe
+    // the desktop's categories on upgrade. A present key, even an empty list,
+    // is a statement.
+    sortCategories: readDeclarations(from.sortCategories) ?? fallback.sortCategories,
+    sortTags: readDeclarations(from.sortTags) ?? fallback.sortTags,
+    sortDestination: readDestination(from.sortDestination) ?? fallback.sortDestination,
+    sortFallback: typeof from.sortFallback === "string" ? from.sortFallback : fallback.sortFallback,
   };
 }
 
@@ -198,15 +278,18 @@ export function defaultShared(): SharedConfig {
 const FENCE = "```";
 
 /** Serialised the way it is written, so a caller can tell its own write back
-    from one that arrived by sync without re-reading the file. */
-export function serializeShared(shared: SharedConfig): string {
+    from one that arrived by sync without re-reading the file. `withSort` is
+    publishesSort's answer. */
+export function serializeShared(shared: SharedConfig, withSort: boolean): string {
+  const body: Partial<SharedConfig> = { ...shared };
+  if (!withSort) for (const key of SORT_KEYS) delete body[key];
   return [
     "# Oriko",
     "",
     "The grids and folders in this vault, shared by every device that opens it. Written by the Oriko plugin; change them in the app rather than here.",
     "",
     `${FENCE}json`,
-    JSON.stringify(shared, null, 2),
+    JSON.stringify(body, null, 2),
     FENCE,
     "",
   ].join("\n");

@@ -12,7 +12,7 @@ import {
   ytdlpPath,
 } from "./convert";
 import { posterPath, previewPath, renderPoster, renderThumbnail, thumbPath } from "./core/derive";
-import { extensionOf, needsPreview } from "./core/formats";
+import { extensionOf, mimeForPath, needsPreview } from "./core/formats";
 import { ClippingIndex } from "./index-store";
 import { hashUrl } from "./core/hash";
 import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./core/normalize";
@@ -116,23 +116,6 @@ export class ArchiveService {
     };
   }
 
-  private static mimeFor(path: string): string {
-    const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-    const map: Record<string, string> = {
-      mp4: "video/mp4",
-      webm: "video/webm",
-      mov: "video/quicktime",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      png: "image/png",
-      gif: "image/gif",
-      webp: "image/webp",
-      avif: "image/avif",
-      svg: "image/svg+xml",
-    };
-    return map[ext] ?? "application/octet-stream";
-  }
-
   /**
    * Loads an archived file as a blob: URL rather than an app:// resource
    * URL. app:// is cross-origin to the page, which taints the canvas and
@@ -142,7 +125,7 @@ export class ArchiveService {
     const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
     if (!(file instanceof TFile)) return null;
     const data = await this.app.vault.readBinary(file);
-    const url = URL.createObjectURL(new Blob([data], { type: ArchiveService.mimeFor(path) }));
+    const url = URL.createObjectURL(new Blob([data], { type: mimeForPath(path) }));
     return { url, revoke: () => URL.revokeObjectURL(url) };
   }
 
@@ -572,6 +555,40 @@ export class ArchiveService {
     await this.ensureFolder();
     const [outcome] = await archiveAll([candidate], record.source, this.deps(), 1);
     if (outcome) this.cache.mergeOutcome(outcome);
+  }
+
+  /**
+   * Downloads one picture for a note being formatted and returns its vault
+   * path, or null. Keyed like every other archived asset, so a picture
+   * already on disk is not fetched a second time.
+   */
+  async archivePicture(url: string, source: string, alt = ""): Promise<string | null> {
+    return this.archiveOne({ key: normalizeUrl(url), url, kind: "image", alt }, source);
+  }
+
+  /**
+   * Downloads the picture a page publishes for itself, found the way
+   * resolvePageCover finds it and kept under the same key, so the tile and
+   * the note agree on which file it is.
+   */
+  async archivePagePicture(source: string, alt = ""): Promise<string | null> {
+    const key = normalizeUrl(source);
+    const known = knownHostThumbnail(source);
+    if (known) {
+      return this.archiveOne({ key, url: known.url, kind: "image", alt, fallbacks: known.fallbacks }, source);
+    }
+    const imageUrl = await this.fetchPageImage(source);
+    return imageUrl ? this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source) : null;
+  }
+
+  private async archiveOne(media: CanonicalMedia, source: string): Promise<string | null> {
+    const held = this.cache.get(media.key)?.file;
+    if (held && this.app.vault.getFileByPath(normalizePath(held))) return held;
+    await this.ensureFolder();
+    const [outcome] = await archiveAll([media], source, this.deps(), 1);
+    if (!outcome) return null;
+    this.cache.mergeOutcome(outcome);
+    return outcome.file ?? null;
   }
 
   private async fetchPageImage(pageUrl: string): Promise<string | null> {

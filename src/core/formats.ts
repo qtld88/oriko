@@ -152,3 +152,47 @@ export function extensionForMime(mime: string): string {
   if (mapped) return mapped;
   return key.startsWith("video/") ? "mp4" : "png";
 }
+
+/**
+ * The canonical MIME for an extension. Written out rather than derived by
+ * reversing MIME_TO_EXT, which maps several types onto one extension and so
+ * has no single answer to invert to.
+ *
+ * It matters twice: a Blob built for the canvas, and a File handed to the
+ * share sheet, which is where iOS decides whether "Save Image" is on offer
+ * at all. application/octet-stream gets a generic file, not a picture.
+ */
+const EXT_TO_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  jfif: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  tif: "image/tiff",
+  tiff: "image/tiff",
+  heic: "image/heic",
+  heif: "image/heif",
+  jxl: "image/jxl",
+  jp2: "image/jp2",
+  dng: "image/x-adobe-dng",
+  svg: "image/svg+xml",
+  mp4: "video/mp4",
+  m4v: "video/x-m4v",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  ogv: "video/ogg",
+  ogg: "video/ogg",
+  avi: "video/x-msvideo",
+  mkv: "video/x-matroska",
+  mpg: "video/mpeg",
+  mpeg: "video/mpeg",
+  "3gp": "video/3gpp",
+};
+
+export function mimeForPath(path: string): string {
+  return EXT_TO_MIME[extensionOf(path)] ?? "application/octet-stream";
+}

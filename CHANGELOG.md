@@ -5,6 +5,27 @@ All notable changes to Oriko will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Turn a folder of old notes into clippings.** Run **Format notes in a folder…** from the command palette, or right-click a folder and choose **Format notes with Oriko**. Each note gets the properties a clipping has, a picture as its `cover` (the first image in the note, or else, when there is none or it can no longer be downloaded, the preview image of its source page, saved into your attachment folder), and is filed into your clippings folder just as a new clip would be, on the grid you have open. Anything the note already says is kept, and the only change to its text is a picture and a source link added at the end when they are missing. Notes with no source link and no picture are left alone and listed. ⌘Z on the wall undoes the whole run.
+
+## [0.1.64] - 2026-09-19
+
+### Fixed
+- **Saving a video no longer hands you two files.** Every clipping with a video was giving you the video plus a second copy of it, or the reel's cover picture, both of which Oriko had quietly archived alongside it. You now get the video on its own, whether you save it to your phone, export it to Downloads or reveal it.
+
+## [0.1.63] - 2026-09-19
+
+### Fixed
+- **Save to device and Open file now turn up on a phone.** Oriko was quietly deciding your phone was a desktop, so you got Export to Downloads and Reveal in Finder instead, and tapping either gave you a note about the file when the truth was there is no Downloads folder or Finder to send it to.
+
+## [0.1.62] - 2026-09-19
+
+### Added
+- **You can now save a clipping's picture or video to your phone.** Open a clipping and tap Save to device, and iOS offers Save Image, Save to Files, or anywhere else you'd send a photo. On a desktop that button is still Export to Downloads and still lands in your Downloads folder.
+- **You can now open a clipping's archived picture or video on your phone.** There's no Finder to reveal it in, so Reveal in Finder is called Open file there and opens the file in its own tab. Both sit in the clipping's bar, the tile's menu and the command palette, same as on a desktop.
+
 ## [0.1.61] - 2026-09-17
 
 ### Added

@@ -29,7 +29,7 @@ Turn your web clippings into a wall of pictures. Oriko lays out every clipping i
 
 ## Clipping
 
-Paste a link anywhere on the wall, or run **Clip from clipboard** from the command palette. Oriko reads the page, downloads its images and video into your attachment folder, and writes a markdown note into your clippings folder. Pasting or dropping a picture or video saves it as a clipping of its own, and pasting a link you already clipped opens the existing note.
+Paste a link anywhere on the wall, or run **Clip from clipboard** from the command palette. Oriko reads the page, downloads its images and video into your attachment folder, and writes a markdown note into your clippings folder. Pasting or dropping a picture or video saves it as a clipping of its own, and pasting a link you already clipped shows a notice you can click to open the existing note.
 
 | Source | What you get |
 | --- | --- |
@@ -41,6 +41,14 @@ Paste a link anywhere on the wall, or run **Clip from clipboard** from the comma
 | A page whose media cannot be scraped | The page itself is scanned as a fallback, so the clipping still gets a picture |
 
 On iOS you can clip straight from any app's share sheet with the **[Clip to Oriko Shortcut](https://www.icloud.com/shortcuts/191427deda394d21a3f5c647b436c085)**. Sharing a post to it opens the wall and clips it, no copy and paste involved. To build it yourself: receive URLs and text from the share sheet, run **Get URLs from Input**, URL-encode the result, and open `obsidian://oriko?url=` followed by the encoded text.
+
+On a Mac the same Shortcut can clip from the clipboard instead, which is what makes it work from any browser: the share sheet is offered by Safari and by little else, so Firefox and Chrome need a route that does not depend on it. Build it with **Get Clipboard**, **Get URLs from Input**, **URL Encode**, and **Open URLs** on `obsidian://oriko?url=` followed by the encoded text. Give it a key in the Shortcuts app, under the shortcut's own details, and clipping becomes one keystroke from wherever you are reading.
+
+Anything that can open a url can clip. `obsidian://oriko?url=<percent-encoded page url>` is the whole contract, and [`contrib/clip-to-oriko.sh`](contrib/clip-to-oriko.sh) is a ready-made shell version of it for the launcher you already keep a key bound to — [Hammerspoon](https://www.hammerspoon.org/), [skhd](https://github.com/koekeishiya/skhd) and [Karabiner-Elements](https://karabiner-elements.pqrs.org/) are free and open source; Raycast and Alfred work too. Obsidian stays in the background either way, so the clip does not interrupt what you were reading.
+
+## Formatting Existing Notes
+
+Notes you wrote before Oriko, or saved with another tool, can join the wall. Run **Format notes in a folder…** from the command palette, or right-click a folder and choose **Format notes with Oriko**. Every note in it gets the properties a clipping carries, keeping whatever it already says, and a picture as its `cover`: the first image in the note, or else, when there is none or it can no longer be downloaded, the preview image of the page its `source` links to, saved into your attachment folder. Then it is filed into your clippings folder the way a new clip is, named after its title and on the grid you have open. A picture from the page and a link to the source are added at the end of the note when missing; nothing else in its text changes. A note with no source link and no picture is left alone and listed in the summary, and ⌘Z on the wall undoes the whole run.
 
 ## The Wall
 
@@ -76,7 +84,7 @@ Remote media is copied into your attachment folder under a name derived from its
 
 **Cleanup.** **Remove orphaned media** lists files no clipping references and moves them to the trash after a confirmation.
 
-**The note body is never touched.** Oriko writes a note's content once, when it creates it. After that it edits only frontmatter, through Obsidian's own frontmatter API: the `grid` key when you move a clipping, and the properties you edit yourself from the wall.
+**The note body is never touched.** Oriko writes a note's content once, when it creates it. After that it edits only frontmatter, through Obsidian's own frontmatter API: the `grid` key when you move a clipping, and the properties you edit yourself from the wall. The one exception is formatting a folder, which you ask for, and which only adds to the end of a note.
 
 ## Privacy
 

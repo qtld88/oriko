@@ -27,6 +27,7 @@ const actions = {
   clearFilters: noop,
   clip: noop,
   archiveAll: noop,
+  sortUnsorted: noop,
   selectAll: noop,
   resetZoom: noop,
 };
@@ -48,6 +49,8 @@ function context(over: Partial<PaletteContext> = {}): PaletteContext {
     facets: { categories: [], status: [], kind: [], domain: [] },
     filter: emptyFilter(),
     hasSystem: true,
+    canExport: true,
+    unsortedCount: 0,
     actions,
     ...over,
   };
@@ -81,10 +84,21 @@ describe("buildCommands", () => {
     expect(ids(context({ selection: ["a.md", "b.md"] }))).not.toContain("selection:reveal");
   });
 
-  it("drops the Finder and Downloads actions when the platform has neither", () => {
-    const list = ids(context({ selection: ["a.md"], hasSystem: false }));
+  it("drops Export where there is nowhere at all to put a copy", () => {
+    const list = ids(context({ selection: ["a.md"], hasSystem: false, canExport: false }));
     expect(list).not.toContain("selection:export");
-    expect(list).not.toContain("selection:reveal");
+  });
+
+  it("keeps saving a copy on a phone, which has a share sheet but no Downloads", () => {
+    const ctx = context({ selection: ["a.md"], hasSystem: false, canExport: true });
+    expect(ids(ctx)).toContain("selection:export");
+    expect(find(ctx, "selection:export")?.label).toBe("Save to device");
+  });
+
+  it("offers a tab in place of Finder where there is no file manager", () => {
+    const ctx = context({ selection: ["a.md"], hasSystem: false, canExport: true });
+    expect(ids(ctx)).toContain("selection:reveal");
+    expect(find(ctx, "selection:reveal")?.label).toBe("Open file");
   });
 
   it("marks deletion destructive", () => {
@@ -413,5 +427,27 @@ describe("facetValueCommands", () => {
 
   it("offers nothing for a facet the wall carries no values for", () => {
     expect(values(context())).toEqual([]);
+  });
+});
+
+describe("sort unsorted row", () => {
+  it("is offered with the count while clippings wait", () => {
+    const row = find(context({ unsortedCount: 12 }), "capture:sort-unsorted");
+    expect(row?.label).toBe("Sort unsorted");
+    expect(row?.detail).toBe("12");
+  });
+
+  it("is not offered when nothing waits", () => {
+    expect(ids(context())).not.toContain("capture:sort-unsorted");
+  });
+
+  it("runs the sweep", () => {
+    let ran = false;
+    const row = find(
+      context({ unsortedCount: 1, actions: { ...actions, sortUnsorted: () => (ran = true) } }),
+      "capture:sort-unsorted"
+    );
+    row?.run?.();
+    expect(ran).toBe(true);
   });
 });

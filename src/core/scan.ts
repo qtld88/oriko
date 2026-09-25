@@ -115,6 +115,19 @@ function str(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+/**
+ * Whether a path is a clipping: a markdown file anywhere under the clippings
+ * folder whose name does not start with `_`, the vault's mark for a file that
+ * lives there without being a clipping (_Oriko.md).
+ */
+export function isInFolder(path: string, folder: string): boolean {
+  if (!path.toLowerCase().endsWith(".md")) return false;
+  const prefix = folder.endsWith("/") ? folder : folder + "/";
+  if (!path.startsWith(prefix)) return false;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return !name.startsWith("_");
+}
+
 export function domainOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "");

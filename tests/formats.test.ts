@@ -7,6 +7,7 @@ import {
   isRenderable,
   isSupported,
   kindForExtension,
+  mimeForPath,
   needsPreview,
 } from "../src/core/formats";
 
@@ -131,5 +132,19 @@ describe("defaultExtension", () => {
   it("differs by kind", () => {
     expect(defaultExtension("image")).toBe("jpg");
     expect(defaultExtension("video")).toBe("mp4");
+  });
+});
+
+describe("mimeForPath", () => {
+  it("names the type an archived file actually is", () => {
+    expect(mimeForPath("Clippings/media/a1b2c3.jpg")).toBe("image/jpeg");
+    expect(mimeForPath("a1b2c3.PNG")).toBe("image/png");
+    expect(mimeForPath("a1b2c3.mov")).toBe("video/quicktime");
+    expect(mimeForPath("a1b2c3.heic")).toBe("image/heic");
+  });
+
+  it("falls back to a generic type rather than guessing", () => {
+    expect(mimeForPath("notes.md")).toBe("application/octet-stream");
+    expect(mimeForPath("nameless")).toBe("application/octet-stream");
   });
 });

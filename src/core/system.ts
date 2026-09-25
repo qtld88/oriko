@@ -2,8 +2,14 @@
  * Thin access to the host OS, desktop only.
  *
  * The bundle is CJS, so `require` here is the module-scope one Obsidian
- * provides, which resolves node builtins. On mobile it throws and every
+ * provides, which resolves node builtins. Mobile has no such thing, and every
  * caller degrades to doing nothing.
+ *
+ * It was assumed that mobile throws. It does not: the shim answers for "fs"
+ * without complaining and hands back nothing usable, which `!== null` read as
+ * a yes. Every desktop-only control was therefore on offer on a phone, and
+ * answered a tap with a notice blaming the file. Ask what the module has, not
+ * whether asking for it threw.
  */
 export function nodeRequire(name: string): unknown {
   try {
@@ -27,8 +33,17 @@ interface OsModule {
   homedir: () => string;
 }
 
+/**
+ * Whether node's fs is really here, judged by the calls this file goes on to
+ * make rather than by the module being non-null.
+ */
 export function systemAvailable(): boolean {
-  return nodeRequire("fs") !== null;
+  const fs = nodeRequire("fs") as Partial<FsModule> | null;
+  return (
+    typeof fs?.existsSync === "function" &&
+    typeof fs?.copyFileSync === "function" &&
+    typeof fs?.mkdirSync === "function"
+  );
 }
 
 export function downloadsDir(): string | null {

@@ -6,14 +6,18 @@ import {
   addIcon,
   TAbstractFile,
   TFile,
+  TFolder,
   WorkspaceLeaf,
   normalizePath,
   parseYaml,
 } from "obsidian";
+import type { CachedMetadata } from "obsidian";
 import { buildDiagnostics } from "./core/diagnose";
 import { setToolOverrides } from "./convert";
 import { ArchiveService } from "./archive-service";
 import { CaptureService } from "./capture";
+import { FolderPickerModal } from "./folder-picker";
+import { FormatService, describeSummary } from "./format-service";
 import { ClippingIndex } from "./index-store";
 import { OrikoSettings, DEFAULT_SETTINGS } from "./core/settings";
 import { isStage } from "./core/density";
@@ -21,14 +25,19 @@ import {
   LEGACY_SHARED_FILES,
   SHARED_FILE,
   extractShared,
+  hasSortKeys,
   isDefaultShared,
+  isDefaultSort,
   parseShared,
+  publishesSort,
   serializeShared,
   sharedOf,
   withShared,
 } from "./core/shared-config";
 import { describeFiles } from "./core/media-refs";
 import { installRepair } from "./repair";
+import { Classifier } from "./classifier";
+import { SortService } from "./sort-service";
 import { sharedHttpUrl } from "./core/resolve";
 import { sharedClipGrid } from "./core/spaces";
 import { ORIKO_ICON_ID, ORIKO_ICON_SVG } from "./core/icon";
@@ -42,8 +51,16 @@ export default class OrikoPlugin extends Plugin {
   index!: ClippingIndex;
   archiver!: ArchiveService;
   capture!: CaptureService;
+  sorter!: SortService;
+  format!: FormatService;
   /** The last shared file this device wrote, to recognise its own echo. */
   private wroteShared = "";
+  /**
+   * Whether the shared file, as this device last read or wrote it, carried the
+   * sort keys. Until it does, a device holding default sort values leaves them
+   * out, so it cannot publish an empty category list over the desktop's.
+   */
+  private sharedHasSort = false;
   private archiveTimer = 0;
 
   /**
@@ -77,7 +94,18 @@ export default class OrikoPlugin extends Plugin {
       this.manifest.dir ?? `${this.app.vault.configDir}/plugins/oriko`
     );
     await this.archiver.loadCache();
+    const classifier = new Classifier(() => this.settings);
+    this.sorter = new SortService(this.app, () => this.settings, classifier);
+    this.register(() => this.sorter.stop());
     this.capture = new CaptureService(
+      this.app,
+      () => this.settings,
+      this.archiver,
+      this.index,
+      classifier,
+      this.sorter.attempts
+    );
+    this.format = new FormatService(
       this.app,
       () => this.settings,
       this.archiver,
@@ -106,12 +134,20 @@ export default class OrikoPlugin extends Plugin {
         );
         return;
       }
+      const s = this.settings;
+      const grid = sharedClipGrid(s.sharedClipTarget, s.activeGrid, s.homeGridName, s.grids);
+      // A share that already knows its grid never needs the wall. On a phone
+      // the clip is the whole point, and opening the view takes over the
+      // screen you shared from; the note lands either way, and a notice says
+      // so. Only "ask" has a question to put on screen.
+      if (grid !== null) {
+        void this.capture.capture(url, grid, true);
+        return;
+      }
       // The view first, so the capture's progress bar has a wall to sit on
       // and the clipped tile has somewhere to fly in.
       void this.activateView().then((view) => {
-        const s = this.settings;
-        const grid = sharedClipGrid(s.sharedClipTarget, s.activeGrid, s.homeGridName, s.grids);
-        if (grid !== null || !view) return this.capture.capture(url, grid ?? undefined);
+        if (!view) return this.capture.capture(url, undefined, true);
         view.pickGridAndClip(url);
       });
     };
@@ -204,9 +240,35 @@ export default class OrikoPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "format-folder",
+      name: "Format notes in a folder…",
+      callback: () => new FolderPickerModal(this.app, (folder) => void this.formatFolder(folder)).open(),
+    });
+
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!(file instanceof TFolder)) return;
+        menu.addItem((item) =>
+          item
+            .setTitle("Format notes with Oriko")
+            .setIcon(ORIKO_ICON_ID)
+            .onClick(() => void this.formatFolder(file))
+        );
+      })
+    );
+
+    this.addCommand({
       id: "archive-clipping-media",
       name: "Download all clipping media",
       callback: () => this.archiveAllMedia(),
+    });
+
+    // Any device can run it; one with no engine says so and stops. It also
+    // retries notes an engine was unsure of before, which the watcher does not.
+    this.addCommand({
+      id: "sort-unsorted",
+      name: "Sort unsorted clippings",
+      callback: () => void this.sorter.sortAll(),
     });
 
     this.app.workspace.onLayoutReady(() => {
@@ -216,6 +278,9 @@ export default class OrikoPlugin extends Plugin {
         if (this.settings.archiveOnCreate) {
           this.scheduleArchive(1500);
         }
+        // Obsidian stays open for days, so this alone would rarely fire. The
+        // watcher below catches what arrives after.
+        if (this.settings.sortArrivals) this.sorter.drainAll();
       });
     });
 
@@ -260,6 +325,14 @@ export default class OrikoPlugin extends Plugin {
         if (admits(f.path)) void this.index.handleModify(f);
       })
     );
+
+    // Not gated by `admits`: an unsorted clip from another device is exactly
+    // the note that is not on the wall yet.
+    this.registerEvent(
+      this.app.metadataCache.on("changed", (f: TFile, _data: string, cache: CachedMetadata) =>
+        this.sorter.noticeChange(f, cache.frontmatter)
+      )
+    );
   }
 
   /**
@@ -302,6 +375,19 @@ export default class OrikoPlugin extends Plugin {
         );
       })();
     }).open();
+  }
+
+  /**
+   * Formats a folder of notes into clippings, then reports what it did. The
+   * run goes into the wall's history, so ⌘Z there takes the whole run back.
+   */
+  async formatFolder(folder: TFolder): Promise<void> {
+    new Notice(`Oriko: formatting ${folder.isRoot() ? "the vault" : folder.path}…`);
+    const result = await this.format.formatFolder(folder);
+    if (!result) return;
+    const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_GRID)[0];
+    if (result.undo && leaf?.view instanceof OrikoView) leaf.view.recordHistory(result.undo);
+    new Notice(describeSummary(result.summary), 10000);
   }
 
   /** Lifted out of its command so the grid's palette can call it too. */
@@ -375,7 +461,14 @@ export default class OrikoPlugin extends Plugin {
         this.wroteShared = body;
         const raw = extractShared(body);
         if (raw !== null) {
+          this.sharedHasSort = hasSortKeys(raw);
           this.settings = withShared(this.settings, parseShared(raw, sharedOf(this.settings)));
+          // The upgrade: a file written before sorting was shared, read by
+          // the device whose data.json still holds the categories. It
+          // publishes them now rather than at its next save.
+          if (!this.sharedHasSort && !isDefaultSort(sharedOf(this.settings))) {
+            await this.writeShared();
+          }
           return;
         }
       } catch {
@@ -415,20 +508,25 @@ export default class OrikoPlugin extends Plugin {
   }
 
   private async writeShared(): Promise<void> {
-    const body = serializeShared(sharedOf(this.settings));
+    const shared = sharedOf(this.settings);
+    const withSort = publishesSort(shared, this.sharedHasSort);
+    const body = serializeShared(shared, withSort);
     // saveSettings also runs for the device's own half, the tile size among
     // them, and rewriting an identical file for those is sync churn on every
     // device rather than a change to anything.
     if (body === this.wroteShared) return;
-    // Remembered so the modify event our own write raises can be told apart
-    // from one that arrived by sync.
-    this.wroteShared = body;
     const path = this.sharedPath();
     const folder = this.settings.clippingsFolder;
     // Adapter for the same reason syncShared gives: this can run at onload,
     // when the vault index cannot yet answer for the folder or the file.
+    // Checked before the body is remembered: a write that never happened must
+    // not make the next save think the file already says this.
     if (folder && !(await this.app.vault.adapter.exists(normalizePath(folder)))) return;
+    // Remembered so the modify event our own write raises can be told apart
+    // from one that arrived by sync.
+    this.wroteShared = body;
     await this.app.vault.adapter.write(path, body);
+    if (withSort) this.sharedHasSort = true;
   }
 
   /**
@@ -449,6 +547,7 @@ export default class OrikoPlugin extends Plugin {
       if (body === this.wroteShared) return;
       const raw = extractShared(body);
       if (raw === null) return;
+      this.sharedHasSort = hasSortKeys(raw);
       this.settings = withShared(this.settings, parseShared(raw, sharedOf(this.settings)));
       // Now what is on disk, as far as this device knows, so the next save
       // does not write the same thing straight back at whoever sent it.
@@ -472,6 +571,10 @@ export default class OrikoPlugin extends Plugin {
     this.settings.filterProperties = [
       ...(this.settings.filterProperties ?? DEFAULT_SETTINGS.filterProperties),
     ];
+    // The declaration lists are pushed onto by the settings tab. The same
+    // copy, for the same reason as the grids above.
+    this.settings.sortCategories = [...(this.settings.sortCategories ?? [])];
+    this.settings.sortTags = [...(this.settings.sortTags ?? [])];
     // A stage that no longer exists, or a hand-edited data.json, lands on the
     // default rather than on a wall laid out to an undefined width.
     if (!isStage(this.settings.tileSize)) this.settings.tileSize = DEFAULT_SETTINGS.tileSize;

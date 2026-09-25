@@ -85,6 +85,7 @@ export interface PaletteActions {
   clearFilters(): void;
   clip(): void;
   archiveAll(): void;
+  sortUnsorted(): void;
   selectAll(): void;
   resetZoom(): void;
 }
@@ -109,6 +110,16 @@ export interface PaletteContext {
   filter: FilterState;
   /** False off desktop, where there is no Finder and no Downloads folder. */
   hasSystem: boolean;
+  /**
+   * Whether a copy can be saved out of Obsidian at all: into ~/Downloads on
+   * desktop, through the share sheet on a phone. Kept apart from hasSystem
+   * because mobile can do that one and not the other, and folding them back
+   * together would take the export row away from the platform that now has
+   * somewhere to put it.
+   */
+  canExport: boolean;
+  /** Clippings marked `unsorted: true`. Zero hides the row. */
+  unsortedCount: number;
   actions: PaletteActions;
 }
 
@@ -166,28 +177,30 @@ function selectionCommands(context: PaletteContext): PaletteCommand[] {
     });
   }
 
-  if (context.hasSystem) {
+  if (context.canExport) {
     items.push({
       id: "selection:export",
-      label: "Export to Downloads",
+      label: context.hasSystem ? "Export to Downloads" : "Save to device",
       icon: "download",
       section: "Actions",
       detail: one ? "⌘E" : count,
-      keywords: "save copy download file",
+      keywords: "save copy download file share",
       run: () => actions.exportSelection(selection),
     });
+  }
 
-    // Revealing picks one file, so a selection of many has no single answer.
-    if (one) {
-      items.push({
-        id: "selection:reveal",
-        label: "Reveal in Finder",
-        icon: "folder",
-        section: "Actions",
-        keywords: "finder show file folder disk",
-        run: () => actions.reveal(selection[0]),
-      });
-    }
+  // Revealing picks one file, so a selection of many has no single answer.
+  // Finder on a desktop, a tab on a phone, which has no file manager behind
+  // it to reveal anything in.
+  if (one) {
+    items.push({
+      id: "selection:reveal",
+      label: context.hasSystem ? "Reveal in Finder" : "Open file",
+      icon: context.hasSystem ? "folder" : "file",
+      section: "Actions",
+      keywords: "finder show file folder disk open",
+      run: () => actions.reveal(selection[0]),
+    });
   }
 
   // Moving to the grid you are already in does nothing, and every selected
@@ -454,7 +467,25 @@ export function facetValueCommands(context: PaletteContext): PaletteCommand[] {
 function captureCommands(context: PaletteContext): PaletteCommand[] {
   const { actions } = context;
 
+  // Only while there is a pile: a row that would find nothing to sort is a
+  // row that should not have survived the query.
+  const sort: PaletteCommand[] =
+    context.unsortedCount > 0
+      ? [
+          {
+            id: "capture:sort-unsorted",
+            label: "Sort unsorted",
+            icon: "wand-sparkles",
+            section: "Capture",
+            detail: String(context.unsortedCount),
+            keywords: "classify categories organise organize file queue pile",
+            run: () => actions.sortUnsorted(),
+          },
+        ]
+      : [];
+
   return [
+    ...sort,
     {
       id: "capture:clip",
       label: "Clip from clipboard",

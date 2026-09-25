@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildNote, buildPastedImageNote } from "../src/core/resolve";
+import { buildNote, buildPastedImageNote, buildScanNote, coverImageFor } from "../src/core/resolve";
 import type { ResolvedLink } from "../src/core/resolve";
 
 function link(overrides: Partial<ResolvedLink> = {}): ResolvedLink {
@@ -168,5 +168,103 @@ describe("buildNote with archived media", () => {
     );
     expect(note).toContain("![[Attachments/a.mp4]]");
     expect(note).toContain("![](https://cdn/b.jpg)");
+  });
+});
+
+describe("the cover property", () => {
+  it("is the archived image as a bare path, which the wall reads with str()", () => {
+    const note = buildNote(
+      link({ media: [{ url: "https://cdn/a.jpg", kind: "image", localPath: "Attachments/a.jpg" }] })
+    );
+    expect(note).toContain('cover: "Attachments/a.jpg"');
+  });
+
+  it("stays empty when archiving did not land, rather than holding an expiring url", () => {
+    const note = buildNote(link({ media: [{ url: "https://cdn/a.jpg", kind: "image" }] }));
+    expect(note).toContain("cover:\n");
+    expect(note).not.toContain('cover: "https://cdn/a.jpg"');
+  });
+
+  it("stays empty behind a leading video, which the tile plays itself", () => {
+    const note = buildNote(
+      link({
+        media: [
+          { url: "https://cdn/a.mp4", kind: "video", localPath: "Attachments/a.mp4" },
+          { url: "https://cdn/b.jpg", kind: "image", localPath: "Attachments/b.jpg" },
+        ],
+      })
+    );
+    expect(note).toContain("cover:\n");
+  });
+
+  it("is written empty rather than omitted, so every clipping has the key", () => {
+    expect(buildNote(link({ media: [] }))).toContain("cover:\n");
+  });
+
+  it("never writes an image property", () => {
+    const notes = [
+      buildNote(link({ media: [{ url: "https://cdn/a.jpg", kind: "image", localPath: "Attachments/a.jpg" }] })),
+      buildScanNote("A page", "https://example.com", "Attachments/scan.png", "2026-09-22"),
+      buildPastedImageNote("Pasted", "Attachments/p.png", "2026-09-22"),
+    ];
+    for (const note of notes) expect(note).not.toMatch(/^image:/m);
+  });
+
+  it("carries the scan on a scanned page", () => {
+    const note = buildScanNote("A page", "https://example.com", "Attachments/scan.png", "2026-09-22");
+    expect(note).toContain('cover: "Attachments/scan.png"');
+  });
+
+  it("carries the attachment on a pasted image", () => {
+    const note = buildPastedImageNote("Pasted", "Attachments/p.png", "2026-09-22");
+    expect(note).toContain('cover: "Attachments/p.png"');
+  });
+});
+
+describe("coverImageFor", () => {
+  it("is empty for no media at all", () => {
+    expect(coverImageFor([])).toBe("");
+  });
+
+  it("is empty when the first item is a video", () => {
+    expect(coverImageFor([{ url: "https://cdn/a.mp4", kind: "video", localPath: "Attachments/a.mp4" }])).toBe("");
+  });
+
+  it("is the archived copy's vault path", () => {
+    expect(
+      coverImageFor([{ url: "https://cdn/a.jpg?sig=1", kind: "image", localPath: "Attachments/a.jpg" }])
+    ).toBe("Attachments/a.jpg");
+  });
+
+  it("is empty for an image that was never archived", () => {
+    expect(coverImageFor([{ url: "https://cdn/a.jpg?sig=1", kind: "image" }])).toBe("");
+  });
+});
+
+describe("buildNote with sorting extras", () => {
+  it("writes the extra lines inside the frontmatter", () => {
+    const note = buildNote(link(), "2026-09-22", "", {
+      lines: ["categories:", '  - "DESIGN"'],
+      tags: [],
+    });
+    expect(note).toContain('categories:\n  - "DESIGN"');
+    expect(note.split("---")[1]).toContain("categories:");
+  });
+
+  it("appends extra tags after the built-in one", () => {
+    const note = buildNote(link(), "2026-09-22", "", {
+      lines: [],
+      tags: ["woodworking", "diy"],
+    });
+    expect(note).toContain('  - "clippings"\n  - "woodworking"\n  - "diy"');
+  });
+
+  it("is unchanged when no extras are given, so old call sites still work", () => {
+    expect(buildNote(link(), "2026-09-22")).toBe(buildNote(link(), "2026-09-22", ""));
+  });
+
+  it("escapes a quote in an extra tag", () => {
+    const note = buildNote(link(), "2026-09-22", "", { lines: [], tags: ['a"b'] });
+    expect(note).toContain('  - "a\\"b"');
   });
 });

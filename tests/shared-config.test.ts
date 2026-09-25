@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   defaultShared,
   extractShared,
+  hasSortKeys,
   isDefaultShared,
   parseShared,
+  publishesSort,
   serializeShared,
   sharedOf,
   withShared,
@@ -16,6 +18,10 @@ const fallback = {
   homeGridName: "Clippings",
   homeGridIcon: "archive",
   filterProperties: ["categories", "status"],
+  sortCategories: [],
+  sortTags: [],
+  sortDestination: "property" as const,
+  sortFallback: "",
 };
 
 describe("sharedOf and withShared", () => {
@@ -30,6 +36,10 @@ describe("sharedOf and withShared", () => {
       "homeGridIcon",
       "homeGridLook",
       "homeGridName",
+      "sortCategories",
+      "sortDestination",
+      "sortFallback",
+      "sortTags",
     ]);
   });
 
@@ -97,7 +107,7 @@ describe("parseShared", () => {
       homeGridIcon: "layout-grid",
       filterProperties: ["categories"],
     };
-    expect(parseShared(raw, fallback)).toEqual({ ...raw, folders: [] });
+    expect(parseShared(raw, fallback)).toEqual({ ...fallback, ...raw, folders: [] });
   });
 
   it("keeps smart grid rules", () => {
@@ -179,7 +189,7 @@ describe("parseShared folders", () => {
       ...defaultShared(),
       folders: [{ name: "Film", icon: "clapperboard", grid: "Design", width: 3 as const }],
     };
-    expect(parseShared(extractShared(serializeShared(shared)), fallback).folders).toEqual(
+    expect(parseShared(extractShared(serializeShared(shared, true)), fallback).folders).toEqual(
       shared.folders
     );
   });
@@ -234,12 +244,12 @@ describe("extractShared", () => {
   };
 
   it("round-trips through the markdown it is written as", () => {
-    const written = serializeShared(shared);
+    const written = serializeShared(shared, true);
     expect(parseShared(extractShared(written), defaultShared())).toEqual(shared);
   });
 
   it("writes a note, not a blob, so every sync carries it", () => {
-    const written = serializeShared(shared);
+    const written = serializeShared(shared, true);
     expect(written.startsWith("# Oriko")).toBe(true);
     expect(written).toContain("```json");
   });
@@ -260,5 +270,121 @@ describe("extractShared", () => {
 
   it("is null for a block that is not valid JSON, rather than throwing", () => {
     expect(extractShared("```json\n{ nope\n```")).toBeNull();
+  });
+});
+
+describe("sort settings in the shared file", () => {
+  const categories = [
+    { name: "DESIGN", description: "graphics, typography, objects" },
+    { name: "MISC", description: "" },
+  ];
+  const desktop = {
+    ...defaultShared(),
+    sortCategories: categories,
+    sortTags: [{ name: "lamp", description: "a lamp" }],
+    sortDestination: "subfolder" as const,
+    sortFallback: "MISC",
+  };
+
+  it("carries the vault's sorting and none of the device's", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      sortCategories: categories,
+      sortEndpoint: "http://localhost:8765/decide",
+      sortApiKey: "secret",
+      sortThreshold: 0.8,
+    };
+    const shared = sharedOf(settings);
+    expect(shared.sortCategories).toEqual(categories);
+    expect(shared).not.toHaveProperty("sortEndpoint");
+    expect(shared).not.toHaveProperty("sortApiKey");
+    expect(shared).not.toHaveProperty("sortThreshold");
+    expect(shared).not.toHaveProperty("autoSort");
+  });
+
+  it("copies the declarations, so editing one does not edit the settings", () => {
+    const settings = { ...DEFAULT_SETTINGS, sortCategories: [{ name: "DESIGN", description: "" }] };
+    sharedOf(settings).sortCategories[0].name = "ART";
+    expect(settings.sortCategories[0].name).toBe("DESIGN");
+  });
+
+  it("round-trips through the file", () => {
+    const written = serializeShared(desktop, true);
+    expect(parseShared(extractShared(written), defaultShared())).toEqual(desktop);
+  });
+
+  it("keeps this device's values when an older file says nothing about sorting", () => {
+    const parsed = parseShared({ grids: [] }, desktop);
+    expect(parsed.sortCategories).toEqual(categories);
+    expect(parsed.sortTags).toEqual(desktop.sortTags);
+    expect(parsed.sortDestination).toBe("subfolder");
+    expect(parsed.sortFallback).toBe("MISC");
+  });
+
+  it("clears them when the file holds an empty list: that is a statement", () => {
+    const parsed = parseShared({ sortCategories: [], sortTags: [] }, desktop);
+    expect(parsed.sortCategories).toEqual([]);
+    expect(parsed.sortTags).toEqual([]);
+  });
+
+  it("clears the fallback when the file holds an empty one", () => {
+    expect(parseShared({ sortFallback: "" }, desktop).sortFallback).toBe("");
+  });
+
+  it("drops declarations with no name and keeps the rest", () => {
+    const parsed = parseShared(
+      { sortCategories: [{ name: "DESIGN", description: "x" }, { description: "no name" }, null, "ART"] },
+      desktop
+    );
+    expect(parsed.sortCategories).toEqual([{ name: "DESIGN", description: "x" }]);
+  });
+
+  it("reads a missing description as empty", () => {
+    const parsed = parseShared({ sortCategories: [{ name: "DESIGN" }] }, desktop);
+    expect(parsed.sortCategories).toEqual([{ name: "DESIGN", description: "" }]);
+  });
+
+  it("keeps this device's destination when the file names one that does not exist", () => {
+    expect(parseShared({ sortDestination: "cloud" }, desktop).sortDestination).toBe("subfolder");
+  });
+
+  it("counts any sorting choice as something to publish", () => {
+    expect(isDefaultShared({ ...defaultShared(), sortCategories: categories })).toBe(false);
+    expect(isDefaultShared({ ...defaultShared(), sortTags: desktop.sortTags })).toBe(false);
+    expect(isDefaultShared({ ...defaultShared(), sortDestination: "grid" })).toBe(false);
+    expect(isDefaultShared({ ...defaultShared(), sortFallback: "MISC" })).toBe(false);
+  });
+
+  it("tells a file that carries the sort keys from one that does not", () => {
+    expect(hasSortKeys({ grids: [] })).toBe(false);
+    expect(hasSortKeys({ grids: [], sortFallback: "" })).toBe(true);
+    expect(hasSortKeys(null)).toBe(false);
+  });
+});
+
+describe("publishing the sort keys", () => {
+  // A phone upgraded before the desktop reads an old file and holds defaults.
+  // Publishing `sortCategories: []` would make the desktop adopt the empty list.
+  it("keeps a device holding defaults quiet while the file has no sort keys", () => {
+    expect(publishesSort(defaultShared(), false)).toBe(false);
+  });
+
+  it("publishes from the device holding real values", () => {
+    const shared = { ...defaultShared(), sortCategories: [{ name: "DESIGN", description: "" }] };
+    expect(publishesSort(shared, false)).toBe(true);
+  });
+
+  it("publishes a clear once the file already carries the keys", () => {
+    expect(publishesSort(defaultShared(), true)).toBe(true);
+  });
+
+  it("leaves the keys out of the file when told not to publish them", () => {
+    const raw = extractShared(serializeShared(defaultShared(), false));
+    expect(hasSortKeys(raw)).toBe(false);
+    expect(raw).toHaveProperty("grids");
+  });
+
+  it("writes them when told to", () => {
+    expect(hasSortKeys(extractShared(serializeShared(defaultShared(), true)))).toBe(true);
   });
 });

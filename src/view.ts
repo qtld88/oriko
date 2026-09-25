@@ -1,8 +1,10 @@
 import { ORIKO_ICON_ID } from "./core/icon";
 import { ItemView, Notice, Platform, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
-import { absolutePath } from "./convert";
-import { dedupeMedia, sourceVideoKeyFor } from "./core/normalize";
+import { absolutePath, vaultOnDisk } from "./convert";
 import { copyToDownloads, revealInFinder, systemAvailable } from "./core/system";
+import { canShareFiles, shareFiles, shareNotice } from "./core/share";
+import type { ShareItem } from "./core/share";
+import { mimeForPath } from "./core/formats";
 import { ActionBar } from "./action-bar";
 import { buildCommands, facetValueCommands } from "./core/commands";
 import type { PaletteContext } from "./core/commands";
@@ -32,6 +34,7 @@ import { resolveLook } from "./core/look";
 import { slotCandidates, surveyProperties } from "./core/facet-catalog";
 import type { GridLook, ResolvedLook } from "./core/look";
 import { History } from "./core/history";
+import type { HistoryEntry } from "./core/history";
 import type { FolderSpace, FolderTileModel, FolderWidth } from "./core/folders";
 import { GridRenderer } from "./grid";
 import { groupedMenu } from "./core/layout";
@@ -65,7 +68,7 @@ import { PENDING_RETRY_MS, PendingSources } from "./core/pending";
 import { SpaceBar } from "./space-bar";
 import { STAGES, expandStage, shrinkStage, stageLabel } from "./core/density";
 import type { DensityStage } from "./core/density";
-import { describeFiles } from "./core/media-refs";
+import { describeFiles, savableFiles } from "./core/media-refs";
 import { orphansAfterDeleting, removeMedia } from "./sweep";
 import {
   effectiveGrid,
@@ -198,6 +201,7 @@ export class OrikoView extends ItemView {
 
     this.progress = new ProgressBar(this.contentEl);
     this.plugin.capture.onProgress = (state) => this.progress?.set(state);
+    this.plugin.format.onProgress = (state) => this.progress?.set(state);
     this.plugin.capture.onFinished = (label, path) => {
       this.progress?.finish(`Clipped ${label}`);
       // Armed, not flown: the tile does not exist until the index change
@@ -797,6 +801,7 @@ export class OrikoView extends ItemView {
     this.playback = null;
     this.plugin.capture.onProgress = null;
     this.plugin.capture.onFinished = null;
+    this.plugin.format.onProgress = null;
     this.progress?.destroy();
     this.progress = null;
     this.actionBar?.destroy();
@@ -809,30 +814,11 @@ export class OrikoView extends ItemView {
     this.grid = null;
   }
 
-  /** Every archived file belonging to a clipping, originals only. */
+  /** What Export, Reveal and Save to device hand over for a clipping. */
   private filesFor(id: string): string[] {
     const record = this.plugin.index.get(id);
     if (!record) return [];
-
-    const cache = this.plugin.archiver.cache;
-    const paths: string[] = [];
-
-    if (record.source) {
-      const video = cache.get(sourceVideoKeyFor(record.source));
-      if (video?.file) paths.push(video.file);
-    }
-    // Looked up through the same dedupe the archiver used, so the keys
-    // match; comparing a raw URL against a normalized key would not.
-    for (const media of dedupeMedia(record.media)) {
-      // An embedded vault file is its own archive.
-      if (!/^https?:\/\//i.test(media.url)) {
-        paths.push(media.url);
-        continue;
-      }
-      const entry = cache.get(media.key);
-      if (entry?.file) paths.push(entry.file);
-    }
-    return [...new Set(paths)];
+    return savableFiles(record, this.plugin.archiver.cache);
   }
 
   /**
@@ -904,21 +890,25 @@ export class OrikoView extends ItemView {
       }
     }
 
-    if (systemAvailable()) {
+    // Desktop copies into ~/Downloads; mobile hands the file to the share
+    // sheet. Same row, same method behind it, and the label says which.
+    if (this.onDisk() || canShareFiles(navigator)) {
       reach.push({
         icon: "download",
-        label: "Export to Downloads",
+        label: this.onDisk() ? "Export to Downloads" : "Save to device",
         detail: "⌘E",
         onSelect: () => void this.exportToDownloads(ids),
       });
+    }
 
-      if (n === 1) {
-        reach.push({
-          icon: "folder",
-          label: "Reveal in Finder",
-          onSelect: () => this.revealFirstFile(ids[0]),
-        });
-      }
+    // Revealing picks one file, so a selection of many has no single answer.
+    // Finder on a desktop, a tab on a phone, and the label says which.
+    if (n === 1) {
+      reach.push({
+        icon: this.onDisk() ? "folder" : "file",
+        label: this.onDisk() ? "Reveal in Finder" : "Open file",
+        onSelect: () => this.revealFirstFile(ids[0]),
+      });
     }
 
     if (this.canFile()) {
@@ -1016,19 +1006,61 @@ export class OrikoView extends ItemView {
     if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
   }
 
+  /**
+   * Whether this host can be handed a real path, which is what Finder and the
+   * copy into Downloads both come down to. Both halves are asked: mobile's
+   * node shim answers for "fs" without throwing, so the module alone is not
+   * evidence, and the vault adapter is.
+   */
+  private onDisk(): boolean {
+    return systemAvailable() && vaultOnDisk(this.app.vault);
+  }
+
+  /**
+   * Shows the archived file itself.
+   *
+   * Desktop hands it to Finder. A phone has no file manager to hand it to, so
+   * it opens the file in a tab instead, which is the nearest thing to the
+   * same answer: here is the file this clipping is made of. Obsidian shows an
+   * image or a video in a leaf on every platform, so that route needs nothing
+   * the host may not have.
+   */
   private revealFirstFile(id: string): void {
-    const file = this.filesFor(id)[0];
-    if (!file) {
+    const path = this.filesFor(id)[0];
+    if (!path) {
       new Notice("Oriko: nothing archived for this clipping yet");
       return;
     }
-    const absolute = absolutePath(this.app.vault, normalizePath(file));
+
+    if (!this.onDisk()) {
+      const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+      if (!(file instanceof TFile)) {
+        new Notice("Oriko: that file is no longer in the vault");
+        return;
+      }
+      void this.app.workspace.getLeaf(false).openFile(file);
+      return;
+    }
+
+    const absolute = absolutePath(this.app.vault, normalizePath(path));
     if (!absolute || !revealInFinder(absolute)) {
       new Notice("Oriko: could not reveal the file");
     }
   }
 
+  /**
+   * Saves a copy of everything archived for these clippings out of Obsidian.
+   *
+   * Two destinations, because the platforms have two different ideas of where
+   * a saved file goes: ~/Downloads on a desktop, and on a phone wherever the
+   * share sheet is pointed, which is the user's call and not ours to make.
+   */
   async exportToDownloads(ids: string[]): Promise<void> {
+    if (!this.onDisk()) {
+      await this.shareToDevice(ids);
+      return;
+    }
+
     let copied = 0;
     for (const id of ids) {
       for (const file of this.filesFor(id)) {
@@ -1043,6 +1075,50 @@ export class OrikoView extends ItemView {
         ? "Oriko: nothing archived to export yet"
         : `Oriko: exported ${copied} file${copied === 1 ? "" : "s"} to Downloads`
     );
+  }
+
+  /**
+   * The mobile half: the bytes go to the system share sheet, and iOS offers
+   * Save Image or Save to Files alongside everything else that accepts a
+   * picture.
+   *
+   * Read through the vault rather than off disk, since there is no disk path
+   * to read from here. That means the file is in memory for as long as the
+   * sheet is up, which is why nothing is read until the host has said it can
+   * share at all.
+   */
+  private async shareToDevice(ids: string[]): Promise<void> {
+    if (!canShareFiles(navigator)) {
+      new Notice(shareNotice("unsupported") ?? "");
+      return;
+    }
+
+    const items: ShareItem[] = [];
+    for (const id of ids) {
+      for (const path of this.filesFor(id)) {
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+        if (!(file instanceof TFile)) continue;
+        try {
+          items.push({
+            name: file.name,
+            mime: mimeForPath(file.name),
+            data: await this.app.vault.readBinary(file),
+          });
+        } catch {
+          // One unreadable file does not cost the others their sheet.
+        }
+      }
+    }
+
+    const outcome = await shareFiles(
+      {
+        host: navigator,
+        makeFile: (data, name, mime) => new File([data], name, { type: mime }),
+      },
+      items
+    );
+    const notice = shareNotice(outcome);
+    if (notice) new Notice(notice);
   }
 
   private confirmDelete(ids: string[]): void {
@@ -1515,7 +1591,9 @@ export class OrikoView extends ItemView {
       facetDefs: defs,
       facets: facetsOf(this.facets, defs),
       filter: this.activeFilter(),
-      hasSystem: systemAvailable(),
+      hasSystem: this.onDisk(),
+      canExport: this.onDisk() || canShareFiles(navigator),
+      unsortedCount: this.plugin.sorter.candidates().length,
       // Every row runs the method its context-menu equivalent runs. The two
       // surfaces list different things; neither reimplements the work.
       actions: {
@@ -1539,6 +1617,7 @@ export class OrikoView extends ItemView {
         clearFilters: () => this.setFilter(emptyFilter()),
         clip: () => void this.plugin.clipFromClipboard(),
         archiveAll: () => this.plugin.archiveAllMedia(),
+        sortUnsorted: () => void this.plugin.sorter.sortAll(),
         selectAll: () => this.grid?.selectAll(),
         resetZoom: () => this.grid?.resetView(),
       },
@@ -2780,6 +2859,11 @@ export class OrikoView extends ItemView {
       undo: () => this.resizeFolder(name, was, false),
       redo: () => this.resizeFolder(name, width, false),
     });
+  }
+
+  /** For work run from outside the wall, a command, that ⌘Z here should take back. */
+  recordHistory(entry: HistoryEntry): void {
+    this.history.push(entry);
   }
 
   private async undo(): Promise<void> {

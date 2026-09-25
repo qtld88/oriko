@@ -7,6 +7,7 @@ import {
   isPluginOwned,
   liveRefs,
   orphanFiles,
+  savableFiles,
 } from "../src/core/media-refs";
 import { normalizeUrl, sourceVideoKeyFor } from "../src/core/normalize";
 import type { ClippingRecord } from "../src/core/scan";
@@ -252,5 +253,93 @@ describe("liveRefs and a post whose video was pulled", () => {
   it("keeps the page cover when the video entry has no file, only a failure", () => {
     const failed: CacheEntry = { ...video("", ""), failed: "404" };
     expect(liveRefs([record], [failed]).keys.has(pageKey)).toBe(true);
+  });
+});
+
+describe("savableFiles", () => {
+  const SOURCE = "https://x.com/someone/status/2089690738049404976";
+  const DOWNLOAD = `${FOLDER}/f9e7bba6e5fd-video.mp4`;
+
+  /** Looks a cache entry up by key, the way the archiver's cache does. */
+  function lookup(entries: CacheEntry[]) {
+    return { get: (key: string) => entries.find((e) => e.key === key) };
+  }
+
+  function ref(url: string, kind: "image" | "video" = "image") {
+    return { url, kind, alt: "" };
+  }
+
+  it("hands over the source video alone, not the page's copy of it", () => {
+    // What every X video clipping in a real vault looks like: yt-dlp pulled
+    // the video from the post, and the page scan archived the same video
+    // again from the media URL it serves directly.
+    const scraped = `${FOLDER}/a67a9d098e1a-HQASpQXa4AAofgJ.mp4`;
+    const files = savableFiles(
+      clipping({ source: SOURCE, media: [ref(scraped, "video")] }),
+      lookup([entry(sourceVideoKeyFor(SOURCE), DOWNLOAD)])
+    );
+
+    expect(files).toEqual([DOWNLOAD]);
+  });
+
+  it("hands over the video alone, not the reel's cover image", () => {
+    // Instagram, Threads and YouTube give a still alongside the video. It is
+    // the same clipping wearing another hat, and saving it was the second
+    // file nobody asked for.
+    const cover = "https://i.ytimg.com/vi/5ka8YsPclIE/maxresdefault.jpg";
+    const files = savableFiles(
+      clipping({ source: SOURCE, media: [ref(cover)] }),
+      lookup([
+        entry(sourceVideoKeyFor(SOURCE), DOWNLOAD),
+        entry(normalizeUrl(cover), `${FOLDER}/a64af7f16b3a-maxresdefault.jpg`),
+      ])
+    );
+
+    expect(files).toEqual([DOWNLOAD]);
+  });
+
+  it("falls back to the refs when the video download failed", () => {
+    // A cache entry with no file: yt-dlp was turned away. The page's own
+    // media is then all there is, and is still worth handing over.
+    const scraped = "https://video.twimg.com/clip.mp4";
+    const archived = `${FOLDER}/f2236dd5c94f-clip.mp4`;
+    const files = savableFiles(
+      clipping({ source: SOURCE, media: [ref(scraped, "video")] }),
+      lookup([entry(sourceVideoKeyFor(SOURCE), ""), entry(normalizeUrl(scraped), archived)])
+    );
+
+    expect(files).toEqual([archived]);
+  });
+
+  it("leaves a still-image clipping exactly as it was", () => {
+    const archived = `${FOLDER}/146d9112d459-photo.jpg`;
+    const files = savableFiles(
+      clipping({ source: SOURCE, media: [ref(SHARED)] }),
+      lookup([entry(normalizeUrl(SHARED), archived)])
+    );
+
+    expect(files).toEqual([archived]);
+  });
+
+  it("takes an embedded vault file as its own archive", () => {
+    const pasted = `${FOLDER}/pasted-2026-09-19.png`;
+    expect(savableFiles(clipping({ media: [ref(pasted)] }), lookup([]))).toEqual([pasted]);
+  });
+
+  it("names a file once however many refs reach it", () => {
+    const archived = `${FOLDER}/146d9112d459-photo.jpg`;
+    const files = savableFiles(
+      clipping({ media: [ref(SHARED), ref(`${SHARED}?name=large`)] }),
+      lookup([
+        entry(normalizeUrl(SHARED), archived),
+        entry(normalizeUrl(`${SHARED}?name=large`), archived),
+      ])
+    );
+
+    expect(files).toEqual([archived]);
+  });
+
+  it("has nothing to hand over for a clipping with no media", () => {
+    expect(savableFiles(clipping(), lookup([]))).toEqual([]);
   });
 });

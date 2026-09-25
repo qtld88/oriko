@@ -9,7 +9,7 @@ import {
   zoomAt,
 } from "./core/camera";
 import type { PinchStart, Point } from "./core/camera";
-import { resourceUrl } from "./convert";
+import { resourceUrl, vaultOnDisk } from "./convert";
 import type { Camera, Size } from "./core/camera";
 import { facetLabel } from "./core/filter";
 import { flightMidpoint, flipTransform } from "./core/layout";
@@ -19,6 +19,7 @@ import type { Box, FlightShape } from "./core/layout";
 import type { TileModel } from "./core/tile";
 import { paintSwatchStrip, readSwatches } from "./core/swatch-strip";
 import { attachTip } from "./core/tip";
+import { canShareFiles } from "./core/share";
 import { systemAvailable } from "./core/system";
 import { clampPan, detailLayout, fitZoomRange } from "./core/viewer";
 import type { DetailLayout } from "./core/viewer";
@@ -215,6 +216,16 @@ export class DetailView {
 
   private resource(path: string): string {
     return resourceUrl(this.app.vault, path) || path;
+  }
+
+  /**
+   * Whether this host can be handed a real path, which is what Finder and the
+   * copy into Downloads both come down to. Both halves are asked: mobile's
+   * node shim answers for "fs" without throwing, so the module alone is not
+   * evidence, and the vault adapter is.
+   */
+  private onDisk(): boolean {
+    return systemAvailable() && vaultOnDisk(this.app.vault);
   }
 
   /** Fires once the stage exists, so the source card can be hidden then. */
@@ -686,26 +697,42 @@ export class DetailView {
         () => window.open(model.record.source)
       );
     }
-    // Both reach for the filesystem, which mobile does not have. Gated the way
-    // the wall's context menu already gates them: without this the bar shows
-    // two controls that cannot work, and Export answers a tap by claiming
-    // nothing has been archived, when the truth is there is nowhere to put it.
-    if (systemAvailable()) {
+    // Saving a copy out means two different things and one button. Desktop
+    // copies into ~/Downloads through node's fs; mobile has no folder of its
+    // own to write to, so it hands the bytes to the system share sheet and
+    // the destination becomes the user's choice. The label says which one is
+    // on offer, and the view sorts out the rest.
+    //
+    // Still gated, because a host with neither is a control that cannot work:
+    // Export used to answer a tap on a phone by claiming nothing had been
+    // archived, when the truth was there was nowhere to put it.
+    if (this.onDisk() || canShareFiles(navigator)) {
       add(
         "download",
-        "Export to Downloads",
+        this.onDisk() ? "Export to Downloads" : "Save to device",
         "\u2318E",
         (event) => mod(event) && !event.shiftKey && event.key.toLowerCase() === "e",
         () => this.actions.onExport(model.id)
       );
-      add(
-        "folder",
-        "Reveal in Finder",
-        "\u2318\u21e7R",
-        (event) => mod(event) && event.shiftKey && event.key.toLowerCase() === "r",
-        () => this.actions.onReveal(model.id)
-      );
     }
+    // Getting to the file itself, which means two different things again.
+    // Desktop hands it to Finder. A phone has no file manager behind the app
+    // to hand it to, so the nearest thing that is still "here is the file"
+    // is opening it in a tab. No longer gated: there is now something for it
+    // to do on both.
+    add(
+      this.onDisk() ? "folder" : "file",
+      this.onDisk() ? "Reveal in Finder" : "Open file",
+      "\u2318\u21e7R",
+      (event) => mod(event) && event.shiftKey && event.key.toLowerCase() === "r",
+      () => {
+        // The mobile half opens a leaf, which would arrive behind this
+        // overlay, so it closes first the way Open note does. Finder needs
+        // no such thing: it comes up in front of Obsidian on its own.
+        if (!this.onDisk()) this.close();
+        this.actions.onReveal(model.id);
+      }
+    );
 
     rule();
 

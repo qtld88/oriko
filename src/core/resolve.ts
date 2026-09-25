@@ -1,6 +1,7 @@
 import { extensionOf, kindForExtension } from "./formats";
 import { decodeEntities, readMetaTags } from "./page-cover";
 import { AMAZON_IMAGE_HOST, AMAZON_IMAGE_MODIFIER } from "./normalize";
+import type { NoteExtras } from "./classify";
 
 export interface ResolvedMedia {
   url: string;
@@ -218,6 +219,66 @@ export function isThreadsUrl(url: string): boolean {
   }
 }
 
+/** One reading of the sniffed page, taken every POLL_MS by sniff.ts. */
+export interface SniffProbe {
+  /** The <video> element's current source, or "" when there is none. */
+  src: string;
+  /** Every URL the page has requested so far, from resource timing. */
+  res: string[];
+  /** True while a <video> element is in the document. */
+  hasVideo: boolean;
+  /** True once document.readyState reports "complete". */
+  ready: boolean;
+}
+
+/** What the sniffer has learnt across every probe so far. */
+export interface SniffProgress {
+  /** Sticky: a player that mounted and then unmounted still counts. */
+  sawVideo: boolean;
+  /** Consecutive probes with the page loaded and no player in it. */
+  quiet: number;
+}
+
+export const NO_SNIFF_PROGRESS: SniffProgress = { sawVideo: false, quiet: 0 };
+
+/**
+ * How many quiet probes end the wait. At the 600 ms poll of sniff.ts this is
+ * three seconds past the load, which is room for a client-rendered player to
+ * mount without being the twenty-second wait it replaces.
+ */
+export const SNIFF_QUIET_POLLS = 5;
+
+/**
+ * Folds one probe into what is known. `sawVideo` only ever turns on, because
+ * a player that mounts and is then replaced during navigation is still proof
+ * the post has a video and still worth the full timeout.
+ */
+export function advanceSniff(prev: SniffProgress, probe: SniffProbe): SniffProgress {
+  const sawVideo = prev.sawVideo || probe.hasVideo;
+  return {
+    sawVideo,
+    quiet: probe.ready && !sawVideo ? prev.quiet + 1 : 0,
+  };
+}
+
+/**
+ * Whether to stop waiting and report no video.
+ *
+ * The sniffer used to have one exit: a twenty-second timeout. A post that
+ * carries a picture rather than a video reaches it every single time, and
+ * measured on a Threads image post the whole clip took 21 s, of which 20 were
+ * this wait. Nothing was wrong and nothing was going to arrive.
+ *
+ * A loaded page with no <video> element in it is the signal. It is not proof
+ * on its own — Threads renders its player client-side, after readyState is
+ * already complete — so the quiet has to hold across several probes before
+ * the wait ends. A page that does mount a player keeps the full timeout,
+ * because a video still resolving its URL is exactly what the wait is for.
+ */
+export function sniffGivesUp(progress: SniffProgress): boolean {
+  return progress.quiet >= SNIFF_QUIET_POLLS;
+}
+
 /**
  * The video URL worth downloading, out of everything a page load touched.
  *
@@ -428,6 +489,24 @@ export function parseAmazonPage(html: string, sourceUrl: string): ResolvedLink {
 }
 
 /** Vault-safe note name derived from a title, never empty. */
+/**
+ * Where a clipping's note goes: its name in the clippings folder, numbered
+ * past any path already taken. One definition, so a clip and a formatted
+ * note are filed alike. `folder` arrives normalized.
+ */
+export function clippingPathFor(
+  folder: string,
+  title: string,
+  url: string,
+  taken: (path: string) => boolean
+): string {
+  const base = noteNameFor(title, url);
+  const at = (name: string): string => (folder ? `${folder}/${name}.md` : `${name}.md`);
+  let path = at(base);
+  for (let n = 2; taken(path); n++) path = at(`${base} ${n}`);
+  return path;
+}
+
 export function noteNameFor(title: string, url: string): string {
   const cleaned = title
     .replace(/[\\/:*?"<>|#^[\]]/g, " ")
@@ -457,13 +536,34 @@ function today(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+/**
+ * The clipping's `cover:`, the one picture property in the vault. The wall
+ * reads it as an override, and Bases takes it as a card image, so the folder
+ * formatter and every note builder write the same key the same way: a bare
+ * vault path, which the scanner reads with str().
+ *
+ * Only an archived image qualifies. The origin's url is signed and expires,
+ * and as an override it would outrank the archived copy the wall finds later.
+ * A leading video leaves it empty too: an override pointing at the picture
+ * behind it would turn the tile into a still.
+ */
+export function coverImageFor(media: readonly ResolvedMedia[]): string {
+  const first = media[0];
+  return first?.kind === "image" && first.localPath ? first.localPath : "";
+}
+
 /** Matches the Web Clipper's frontmatter contract, which the vault treats as fixed. */
 /**
  * `grid` is written only when the capture is going somewhere other than home.
  * Home is the absence of the key, so stamping it would put a redundant line
  * in every note the plugin creates.
  */
-export function buildNote(link: ResolvedLink, created = today(), grid = ""): string {
+export function buildNote(
+  link: ResolvedLink,
+  created = today(),
+  grid = "",
+  extras: NoteExtras = { lines: [], tags: [] }
+): string {
   const lines = [
     "---",
     `title: ${yamlString(link.title)}`,
@@ -475,7 +575,15 @@ export function buildNote(link: ResolvedLink, created = today(), grid = ""): str
   lines.push(link.published ? `published: ${yamlString(link.published)}` : "published:");
   lines.push(`created: ${created}`);
   lines.push(`description: ${yamlString(link.description)}`);
+  // Always written, empty or not, so every clipping carries the same keys
+  // and a cards view never has to cope with a missing property.
+  const cover = coverImageFor(link.media);
+  lines.push(cover ? `cover: ${yamlString(cover)}` : "cover:");
   lines.push("tags:", '  - "clippings"');
+  // Sorting's tags join the built-in one inside the same block, and its other
+  // keys follow. Both are empty unless auto-sorting decided something.
+  for (const tag of extras.tags) lines.push(`  - ${yamlString(tag)}`);
+  lines.push(...extras.lines);
   if (grid) lines.push(`grid: ${yamlString(grid)}`);
   lines.push("---", "");
 

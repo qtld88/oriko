@@ -4,6 +4,15 @@ import { todayISO as today } from "./core/dates";
 import { extensionForMime } from "./core/formats";
 import { fileableGrid } from "./core/spaces";
 import type { ClippingIndex } from "./index-store";
+import type { Classifier } from "./classifier";
+import type { AttemptLog } from "./core/unsorted";
+import {
+  NO_VERDICT,
+  clippingState,
+  verdictExtras,
+  verdictSubfolder,
+} from "./core/classify";
+import type { SortOutcome, Verdict } from "./core/classify";
 import {
   ResolvedLink,
   amazonProduct,
@@ -11,6 +20,7 @@ import {
   buildPastedImageNote,
   buildScanNote,
   cleanUrl,
+  clippingPathFor,
   directMediaKind,
   directMediaLink,
   fxApiUrl,
@@ -34,6 +44,13 @@ import { scanAvailable, scanPage } from "./page-scanner";
  */
 const USER_AGENT = "Mozilla/5.0 (compatible; Oriko/0.1; Obsidian link preview)";
 
+/**
+ * How long the clip notice stays. Long enough to read three short lines and
+ * reach the click that opens the note, short enough that a run of clips does
+ * not bury the workspace.
+ */
+const CLIP_NOTICE_MS = 5000;
+
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
 /** Filename-safe stamp, unique to the second so two pastes cannot collide. */
@@ -45,9 +62,42 @@ function todayStamp(): string {
   );
 }
 
+/**
+ * What the notice says about sorting. Silent when the feature is off: someone
+ * who never turned it on does not need to read about it on every clip.
+ *
+ * Unsure and unavailable both leave the clipping at the root, and saying which
+ * is which is the point. One is the model hedging, the other is a server that
+ * never answered, and they are fixed in different places. Declaring no
+ * categories is the commonest cause of all and the least guessable, so that
+ * one says where to go.
+ */
+function sortingLine(outcome: SortOutcome, category: string): string {
+  switch (outcome) {
+    case "sorted":
+      return `Sorted into ${category}`;
+    case "fallback":
+      return `Filed under ${category}: nothing was certain enough`;
+    case "unsure":
+      return "Left unsorted: nothing was certain enough";
+    case "unavailable":
+      return "Left unsorted: no sorting endpoint answered";
+    case "no-engine":
+      return "Left unsorted: no engine on this device, sort it from your desktop";
+    case "no-categories":
+      return "Left unsorted: no categories set in Oriko settings";
+    case "no-text":
+      return "Left unsorted: the page carries no text to read";
+    default:
+      return "";
+  }
+}
+
 export class CaptureService {
   /** Set by the grid view so capture can drive its progress bar. */
   onProgress: ((state: ProgressState | null) => void) | null = null;
+  /** True while the capture in flight arrived from outside the app. */
+  private shared = false;
   /**
    * Carries the note's path as well as its label: the grid flies to what you
    * just clipped, and a title is not enough to find a tile by.
@@ -58,7 +108,11 @@ export class CaptureService {
     private app: App,
     private settings: () => OrikoSettings,
     private archiver: ArchiveService,
-    private index: ClippingIndex
+    private index: ClippingIndex,
+    private classifier: Classifier,
+    /** Told about every note written here, so the arrivals watcher does not
+        ask the same engine again seconds after it failed. */
+    private attempts: AttemptLog
   ) {}
 
   async captureFromClipboard(): Promise<void> {
@@ -152,7 +206,7 @@ export class CaptureService {
       return;
     }
 
-    this.onFinished?.(title, notePath);
+    this.finished(title, notePath);
   }
 
   /**
@@ -173,7 +227,8 @@ export class CaptureService {
    * `grid` is where to file it, "" for home. Left out, the open grid is used,
    * which is what an in-app clip means.
    */
-  async capture(raw: string, grid?: string): Promise<void> {
+  async capture(raw: string, grid?: string, shared = false): Promise<void> {
+    this.shared = shared;
     const url = cleanUrl(raw);
     if (!isHttpUrl(url)) {
       new Notice("Oriko: that is not a link");
@@ -183,9 +238,9 @@ export class CaptureService {
     const existing = this.index.records().find((r) => cleanUrl(r.source) === url);
     if (existing) {
       this.onProgress?.(null);
-      new Notice("Oriko: already clipped");
-      const file = this.app.vault.getAbstractFileByPath(existing.path);
-      if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+      // Opening the note is left to the user: a repeat paste is often a slip,
+      // and yanking the wall away for one is worse than a click to get there.
+      this.openableNotice("Oriko: already clipped", existing.path);
       return;
     }
 
@@ -211,6 +266,12 @@ export class CaptureService {
     // themselves. These CDN urls are signed and expire within days; a note
     // that points at one is a note that stops working.
     this.report(0.3, "Downloading media…");
+    // Started here rather than awaited here. The model answers in well under a
+    // second while the media download takes several, so running them side by
+    // side costs no wall-clock time at all.
+    const sorting = this.classifier
+      .classify(clippingState(link.title, link.description, link.url))
+      .catch(() => ({ verdict: NO_VERDICT, outcome: "unavailable" as SortOutcome }));
     const archived = await this.archiver.archiveResolved(
       link.url,
       link.media,
@@ -238,16 +299,18 @@ export class CaptureService {
     }
 
     this.report(0.85, "Creating clipping…");
-    const file = await this.createNote({ ...link, media }, undefined, grid);
+    const sorted = await sorting;
+    const file = await this.createNote({ ...link, media }, undefined, grid, sorted.verdict);
     if (!file) {
       this.onProgress?.(null);
       return;
     }
+    this.attempts.record(file.path, file.stat.mtime);
 
     // handleModify, not ingest: ingest updates the index silently, so the
     // grid was never told the clipping had landed.
     await this.index.handleModify(file);
-    this.onFinished?.(link.title.slice(0, 40), file.path);
+    this.finished(link.title.slice(0, 40), file.path, sorted.outcome, sorted.verdict.category);
   }
 
   private async resolve(url: string): Promise<ResolvedLink | null> {
@@ -411,31 +474,87 @@ export class CaptureService {
     );
     if (!file) return { ok: false, reason: "could not create the note" };
     await this.index.handleModify(file);
-    this.onFinished?.(link.title.slice(0, 40), file.path);
+    this.finished(link.title.slice(0, 40), file.path);
     return { ok: true };
+  }
+
+  /**
+   * Announces a finished clip. The wall's own listener draws the progress bar
+   * and flies to the tile, but a clip shared from a phone or a browser may
+   * have no wall watching at all, and a capture that says nothing is
+   * indistinguishable from one that silently failed.
+   *
+   * The notice is then the only handle on the note, so it opens it when
+   * clicked. It still fades: a clip shared from a browser lands behind that
+   * browser's window, and the alternative to fading is a stack of notices
+   * waiting in Obsidian for someone who clipped ten things and read none of
+   * them. The note is in the vault either way; the notice is a shortcut to
+   * it, not the record of it.
+   */
+  private finished(
+    label: string,
+    path: string,
+    outcome: SortOutcome = "off",
+    category = ""
+  ): void {
+    this.onFinished?.(label, path);
+    // The wall, when there is one, has already been told. A notice follows
+    // only when nobody was watching Obsidian: either no wall at all, or a
+    // wall behind the browser the clip was shared from.
+    if (this.onFinished && !this.shared) return;
+    this.openableNotice(`Oriko: clipped ${label}`, path, sortingLine(outcome, category));
+  }
+
+  /**
+   * A notice that opens the note at `path` when clicked. The hint line is the
+   * whole point: Obsidian's own notices are dismissed by a click, so nothing
+   * about one suggests that clicking it could do work instead.
+   */
+  private openableNotice(text: string, path: string, detail = ""): void {
+    const message = createFragment((el) => {
+      el.createDiv({ text });
+      if (detail) el.createDiv({ cls: "oriko-clip-notice-detail", text: detail });
+      el.createDiv({ cls: "oriko-clip-notice-hint", text: "Click to open the note" });
+    });
+    const notice = new Notice(message, CLIP_NOTICE_MS);
+    notice.containerEl.addClass("oriko-clip-notice");
+    notice.containerEl.addEventListener("click", () => {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+      notice.hide();
+    });
   }
 
   private async createNote(
     link: ResolvedLink,
     content?: (grid: string) => string,
-    explicitGrid?: string
+    explicitGrid?: string,
+    verdict: Verdict = NO_VERDICT
   ): Promise<TFile | null> {
-    const folder = normalizePath(this.settings().clippingsFolder);
+    const destination = this.settings().sortDestination;
+    // Decided before the file exists, so no note is ever moved afterwards and
+    // no relative link into the attachments folder is ever broken.
+    const subfolder = verdictSubfolder(verdict, destination);
+    const root = this.settings().clippingsFolder;
+    const folder = normalizePath(subfolder ? `${root}/${subfolder}` : root);
     if (!this.app.vault.getFolderByPath(folder)) {
       await this.app.vault.createFolder(folder).catch(() => {});
     }
 
-    const base = noteNameFor(link.title, link.url);
-    let path = normalizePath(`${folder}/${base}.md`);
-    let n = 2;
-    while (this.app.vault.getAbstractFileByPath(path)) {
-      path = normalizePath(`${folder}/${base} ${n}.md`);
-      n++;
-    }
+    const path = normalizePath(
+      clippingPathFor(folder, link.title, link.url, (p) =>
+        Boolean(this.app.vault.getAbstractFileByPath(normalizePath(p)))
+      )
+    );
 
     try {
       const grid = this.targetGrid(explicitGrid);
-      return await this.app.vault.create(path, content ? content(grid) : buildNote(link, today(), grid));
+      return await this.app.vault.create(
+        path,
+        content
+          ? content(grid)
+          : buildNote(link, today(), grid, verdictExtras(verdict, destination))
+      );
     } catch (error) {
       new Notice(`Oriko: could not create the note (${String(error)})`);
       return null;

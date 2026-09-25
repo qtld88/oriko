@@ -118,6 +118,49 @@ export function filesForRefs(live: LiveRefs, cache: readonly CacheEntry[]): stri
   return [...files];
 }
 
+/**
+ * The files to hand over when a clipping is exported, revealed or saved to a
+ * device: what the reader would call "this clipping's picture or video".
+ *
+ * Not the same as everything archived for it, which is what listing the media
+ * refs gives you and what Export used to send. A clipping whose video was
+ * downloaded from its source page carries a second copy of that same video
+ * anyway - X serves the file directly and the page scan archives it too - or
+ * else the reel's cover image, which Instagram, Threads and YouTube all
+ * provide. Both are that one video wearing another hat, so both arrived
+ * alongside it in the share sheet and in Downloads. On a real vault that was
+ * 70 clippings of 153 handing over two files where the user asked for one.
+ *
+ * Hence the rule: a source video download *is* the clipping's media, and
+ * nothing scraped from the page competes with it. Only when there is no such
+ * download do the refs themselves answer, which is the still-image case and
+ * was never the one that doubled.
+ *
+ * Pure, and told what is cached rather than looking, so the rule is testable
+ * without a vault - it was wrong here for as long as it was untested.
+ */
+export function savableFiles(
+  record: ClippingRecord,
+  cache: { get(key: string): CacheEntry | undefined }
+): string[] {
+  const video = record.source ? cache.get(sourceVideoKeyFor(record.source)) : undefined;
+  if (video?.file) return [video.file];
+
+  const paths: string[] = [];
+  // Looked up through the same dedupe the archiver used, so the keys match;
+  // comparing a raw URL against a normalized key would not.
+  for (const media of dedupeMedia(record.media)) {
+    // An embedded vault file is its own archive.
+    if (!isRemote(media.url)) {
+      paths.push(media.url);
+      continue;
+    }
+    const entry = cache.get(media.key);
+    if (entry?.file) paths.push(entry.file);
+  }
+  return [...new Set(paths)];
+}
+
 export interface OrphanQuery {
   /** What the surviving clippings reference. */
   live: LiveRefs;
