@@ -1,5 +1,6 @@
 import { App, Notice, TFile, normalizePath, requestUrl } from "obsidian";
 import type { ArchiveService } from "./archive-service";
+import { linkedPages } from "./core/conform";
 import { todayISO as today } from "./core/dates";
 import { extensionForMime } from "./core/formats";
 import { fileableGrid } from "./core/spaces";
@@ -191,7 +192,14 @@ export class CaptureService {
     }
 
     this.report(0.1, "Reading link…");
-    const link = await this.resolve(url);
+    let link = await this.resolve(url);
+
+    // A post that is only text often shares a link, and that page's own
+    // preview image says more about the post than a scan of its words.
+    if (link && link.media.length === 0) {
+      const preview = await this.linkedPreview(link);
+      if (preview) link = { ...link, media: [{ url: preview, kind: "image" }] };
+    }
 
     if (!link || link.media.length === 0) {
       // A page that offers no media at all is still worth keeping: scan it
@@ -249,6 +257,21 @@ export class CaptureService {
     // grid was never told the clipping had landed.
     await this.index.handleModify(file);
     this.onFinished?.(link.title.slice(0, 40), file.path);
+  }
+
+  /**
+   * The preview image of the first page the post's text links to that
+   * publishes one, or null. Read off the text the resolver already has, so
+   * a post with no links costs no request.
+   */
+  private async linkedPreview(link: ResolvedLink): Promise<string | null> {
+    const pages = linkedPages(link.description, link.url);
+    if (pages.length > 0) this.report(0.2, "Reading linked page…");
+    for (const page of pages) {
+      const image = (await this.resolvePage(page))?.media.find((m) => m.kind === "image");
+      if (image) return image.url;
+    }
+    return null;
   }
 
   private async resolve(url: string): Promise<ResolvedLink | null> {

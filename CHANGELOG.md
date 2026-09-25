@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **A post with no picture of its own no longer shows its author's face.** A Threads or Instagram post that is only text publishes the author's profile picture as its preview, and clippers copy avatars into the note beside the post, so the tile was a portrait of whoever wrote it. Profile pictures from Threads, Instagram, Facebook, X, Bluesky and Mastodon are now never used as a clipping's picture. When formatting a folder, a note whose text links to another page takes that page's preview image instead, and a cover that turns out to be a profile picture is replaced or removed.
+- **Clipping a post that is only text now uses the preview of the link it shares.** Before, Oriko went straight to scanning the post into a picture; now it first looks at the pages the post links to and takes the first one's preview image. The scan is still the fallback for a post with no link.
 
 ## [0.1.61] - 2026-09-17
 
