@@ -34,6 +34,7 @@ import { resolveLook } from "./core/look";
 import { slotCandidates, surveyProperties } from "./core/facet-catalog";
 import type { GridLook, ResolvedLook } from "./core/look";
 import { History } from "./core/history";
+import type { HistoryEntry } from "./core/history";
 import type { FolderSpace, FolderTileModel, FolderWidth } from "./core/folders";
 import { GridRenderer } from "./grid";
 import { groupedMenu } from "./core/layout";
@@ -200,6 +201,7 @@ export class OrikoView extends ItemView {
 
     this.progress = new ProgressBar(this.contentEl);
     this.plugin.capture.onProgress = (state) => this.progress?.set(state);
+    this.plugin.format.onProgress = (state) => this.progress?.set(state);
     this.plugin.capture.onFinished = (label, path) => {
       this.progress?.finish(`Clipped ${label}`);
       // Armed, not flown: the tile does not exist until the index change
@@ -799,6 +801,7 @@ export class OrikoView extends ItemView {
     this.playback = null;
     this.plugin.capture.onProgress = null;
     this.plugin.capture.onFinished = null;
+    this.plugin.format.onProgress = null;
     this.progress?.destroy();
     this.progress = null;
     this.actionBar?.destroy();
@@ -2856,6 +2859,11 @@ export class OrikoView extends ItemView {
       undo: () => this.resizeFolder(name, was, false),
       redo: () => this.resizeFolder(name, width, false),
     });
+  }
+
+  /** For work run from outside the wall, a command, that ⌘Z here should take back. */
+  recordHistory(entry: HistoryEntry): void {
+    this.history.push(entry);
   }
 
   private async undo(): Promise<void> {

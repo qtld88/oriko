@@ -5,6 +5,11 @@ All notable changes to Oriko will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Turn a folder of old notes into clippings.** Run **Format notes in a folder…** from the command palette, or right-click a folder and choose **Format notes with Oriko**. Each note gets the properties a clipping has, a picture as its `cover` (the first image in the note, or else, when there is none or it can no longer be downloaded, the preview image of its source page, saved into your attachment folder), and is filed into your clippings folder just as a new clip would be, on the grid you have open. Anything the note already says is kept, and the only change to its text is a picture and a source link added at the end when they are missing. Notes with no source link and no picture are left alone and listed. ⌘Z on the wall undoes the whole run.
+
 ## [0.1.64] - 2026-09-19
 
 ### Fixed

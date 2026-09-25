@@ -489,6 +489,24 @@ export function parseAmazonPage(html: string, sourceUrl: string): ResolvedLink {
 }
 
 /** Vault-safe note name derived from a title, never empty. */
+/**
+ * Where a clipping's note goes: its name in the clippings folder, numbered
+ * past any path already taken. One definition, so a clip and a formatted
+ * note are filed alike. `folder` arrives normalized.
+ */
+export function clippingPathFor(
+  folder: string,
+  title: string,
+  url: string,
+  taken: (path: string) => boolean
+): string {
+  const base = noteNameFor(title, url);
+  const at = (name: string): string => (folder ? `${folder}/${name}.md` : `${name}.md`);
+  let path = at(base);
+  for (let n = 2; taken(path); n++) path = at(`${base} ${n}`);
+  return path;
+}
+
 export function noteNameFor(title: string, url: string): string {
   const cleaned = title
     .replace(/[\\/:*?"<>|#^[\]]/g, " ")

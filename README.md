@@ -46,6 +46,10 @@ On a Mac the same Shortcut can clip from the clipboard instead, which is what ma
 
 Anything that can open a url can clip. `obsidian://oriko?url=<percent-encoded page url>` is the whole contract, and [`contrib/clip-to-oriko.sh`](contrib/clip-to-oriko.sh) is a ready-made shell version of it for the launcher you already keep a key bound to — [Hammerspoon](https://www.hammerspoon.org/), [skhd](https://github.com/koekeishiya/skhd) and [Karabiner-Elements](https://karabiner-elements.pqrs.org/) are free and open source; Raycast and Alfred work too. Obsidian stays in the background either way, so the clip does not interrupt what you were reading.
 
+## Formatting Existing Notes
+
+Notes you wrote before Oriko, or saved with another tool, can join the wall. Run **Format notes in a folder…** from the command palette, or right-click a folder and choose **Format notes with Oriko**. Every note in it gets the properties a clipping carries, keeping whatever it already says, and a picture as its `cover`: the first image in the note, or else, when there is none or it can no longer be downloaded, the preview image of the page its `source` links to, saved into your attachment folder. Then it is filed into your clippings folder the way a new clip is, named after its title and on the grid you have open. A picture from the page and a link to the source are added at the end of the note when missing; nothing else in its text changes. A note with no source link and no picture is left alone and listed in the summary, and ⌘Z on the wall undoes the whole run.
+
 ## The Wall
 
 Every clipping is a tile: pan and pinch on a phone, scroll and zoom on a desktop, and click or tap a tile to open it full screen with its properties and actions. Videos can autoplay muted while they are in view, respecting Reduce Motion. Select many at once with a drag on desktop or a long press on mobile, then move, export or delete them together.
@@ -80,7 +84,7 @@ Remote media is copied into your attachment folder under a name derived from its
 
 **Cleanup.** **Remove orphaned media** lists files no clipping references and moves them to the trash after a confirmation.
 
-**The note body is never touched.** Oriko writes a note's content once, when it creates it. After that it edits only frontmatter, through Obsidian's own frontmatter API: the `grid` key when you move a clipping, and the properties you edit yourself from the wall.
+**The note body is never touched.** Oriko writes a note's content once, when it creates it. After that it edits only frontmatter, through Obsidian's own frontmatter API: the `grid` key when you move a clipping, and the properties you edit yourself from the wall. The one exception is formatting a folder, which you ask for, and which only adds to the end of a note.
 
 ## Privacy
 
