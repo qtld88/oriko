@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Turn a folder of old notes into clippings.** Run **Format notes in a folder…** from the command palette, or right-click a folder and choose **Format notes with Oriko**. Each note gets the properties a clipping has, a picture as its `cover` (the first image in the note, or else, when there is none or it can no longer be downloaded, the preview image of its source page, saved into your attachment folder), and is filed into your clippings folder just as a new clip would be, on the grid you have open. Anything the note already says is kept, and the only change to its text is a picture and a source link added at the end when they are missing. Notes with no source link and no picture are left alone and listed. ⌘Z on the wall undoes the whole run.
 
+### Fixed
+- **A post with no picture of its own no longer shows its author's face.** A Threads or Instagram post that is only text publishes the author's profile picture as its preview, and clippers copy avatars into the note beside the post, so the tile was a portrait of whoever wrote it. Profile pictures from Threads, Instagram, Facebook, X, Bluesky and Mastodon are now never used as a clipping's picture. When formatting a folder, a note whose text links to another page takes that page's preview image instead, and a cover that turns out to be a profile picture is replaced or removed.
+
 ## [0.1.61] - 2026-09-17
 
 ### Added

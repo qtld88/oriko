@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractPageImage, knownHostThumbnail, needsPageCover } from "../src/core/page-cover";
+import {
+  extractPageImage,
+  isAvatarUrl,
+  knownHostThumbnail,
+  needsPageCover,
+} from "../src/core/page-cover";
 
 describe("knownHostThumbnail", () => {
   it("resolves a standard youtube watch url", () => {
@@ -58,8 +63,39 @@ describe("knownHostThumbnail", () => {
   });
 });
 
+const THREADS_AVATAR =
+  "https://scontent-cdg4-1.cdninstagram.com/v/t51.2885-19/123_456_n.jpg?stp=dst-jpg_s150x150";
+
+describe("isAvatarUrl", () => {
+  it("knows a profile picture on each network", () => {
+    expect(isAvatarUrl(THREADS_AVATAR)).toBe(true);
+    expect(isAvatarUrl("https://instagram.fcdg1-1.fna.fbcdn.net/v/t51.82787-19/1_n.jpg")).toBe(true);
+    expect(isAvatarUrl("https://pbs.twimg.com/profile_images/1/a_400x400.jpg")).toBe(true);
+    expect(isAvatarUrl("https://cdn.bsky.app/img/avatar/plain/did:plc:x/y@jpeg")).toBe(true);
+    expect(isAvatarUrl("https://files.mastodon.social/accounts/avatars/1/original/a.png")).toBe(true);
+  });
+
+  it("leaves a post's own pictures alone", () => {
+    expect(isAvatarUrl("https://scontent-cdg4-1.cdninstagram.com/v/t51.2885-15/1_n.jpg")).toBe(false);
+    expect(isAvatarUrl("https://pbs.twimg.com/media/abc.jpg")).toBe(false);
+    expect(isAvatarUrl("Attachments/a.jpg")).toBe(false);
+  });
+});
+
 describe("extractPageImage", () => {
   const base = "https://example.com/article";
+
+  it("gives a text post, which publishes only its author's face, no image", () => {
+    const html = `<meta property="og:image" content="${THREADS_AVATAR}">`;
+    expect(extractPageImage(html, base)).toBeNull();
+  });
+
+  it("passes over a profile picture to the next image declared", () => {
+    const html =
+      `<meta property="og:image" content="${THREADS_AVATAR}">` +
+      '<meta name="twitter:image" content="https://cdn.example.com/b.jpg">';
+    expect(extractPageImage(html, base)).toBe("https://cdn.example.com/b.jpg");
+  });
 
   it("reads og:image from a property attribute", () => {
     const html = '<meta property="og:image" content="https://cdn.example.com/a.jpg">';

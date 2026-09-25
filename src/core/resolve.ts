@@ -1,5 +1,5 @@
 import { extensionOf, kindForExtension } from "./formats";
-import { decodeEntities, readMetaTags } from "./page-cover";
+import { decodeEntities, isAvatarUrl, readMetaTags } from "./page-cover";
 import { AMAZON_IMAGE_HOST, AMAZON_IMAGE_MODIFIER } from "./normalize";
 
 export interface ResolvedMedia {
@@ -309,6 +309,8 @@ export function parsePageMeta(html: string, sourceUrl: string): ResolvedLink {
     }
     if (seen.has(absolute)) return;
     seen.add(absolute);
+    // A post with nothing of its own to show publishes its author's face.
+    if (kind === "image" && isAvatarUrl(absolute)) return;
     media.push({ url: absolute, kind });
   };
 

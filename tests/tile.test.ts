@@ -438,3 +438,18 @@ describe("buildTiles with local embeds", () => {
     expect(buildTiles([video], new MediaCache())).toEqual([]);
   });
 });
+
+describe("profile pictures", () => {
+  const AVATAR = "https://scontent.cdninstagram.com/v/t51.2885-19/1_n.jpg";
+
+  it("never makes a tile of the author's face in the body", () => {
+    const record = scanClipping("Clippings/T.md", {}, `![](${AVATAR})\n\nJust words.`);
+    expect(buildTiles([record], new MediaCache())).toEqual([]);
+  });
+
+  it("knows the face again once archived and embedded as a file", () => {
+    const record = scanClipping("Clippings/T.md", {}, "![[Att/face.jpg]]");
+    const cache = cacheWith([[AVATAR, { file: "Att/face.jpg" }]]);
+    expect(buildTiles([record], cache)).toEqual([]);
+  });
+});

@@ -171,6 +171,12 @@ describe("parsePageMeta", () => {
     expect(out.media).toEqual([{ url: "https://cdn/a.jpg", kind: "image" }]);
   });
 
+  it("does not take the author's face for the post's picture", () => {
+    const html =
+      '<meta property="og:image" content="https://scontent.cdninstagram.com/v/t51.2885-19/1_n.jpg">';
+    expect(parsePageMeta(html, base).media).toEqual([]);
+  });
+
   it("puts video ahead of the poster image", () => {
     const html =
       '<meta property="og:image" content="https://cdn/a.jpg">' +

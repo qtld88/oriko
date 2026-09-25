@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { appendedBody, isEmptyPlan, planConformance, tagsOf } from "../src/core/conform";
+import { appendedBody, isEmptyPlan, linkedPages, planConformance, tagsOf } from "../src/core/conform";
 import type { ConformPlan } from "../src/core/conform";
 import { clippingPathFor } from "../src/core/resolve";
 
 const CREATED = new Date(2024, 2, 5, 12).getTime();
 const SOURCE = "https://example.com/post";
+const THREAD = "https://www.threads.net/@someone/post/abc";
+const AVATAR =
+  "https://scontent-cdg4-1.cdninstagram.com/v/t51.2885-19/123_456_n.jpg?stp=dst-jpg_s150x150";
 
 function plan(
   frontmatter: Record<string, unknown>,
@@ -54,7 +57,7 @@ describe("planConformance", () => {
   });
 
   it("asks the page for a picture when the body has none", () => {
-    expect(plan({ source: SOURCE }).picture).toEqual({ kind: "page", source: SOURCE });
+    expect(plan({ source: SOURCE }).picture).toEqual({ kind: "page", pages: [SOURCE] });
   });
 
   it("takes the first image in the body over the page", () => {
@@ -63,6 +66,7 @@ describe("planConformance", () => {
       kind: "body",
       url: "https://cdn.example.com/a.jpg",
       remote: true,
+      pages: [SOURCE],
     });
   });
 
@@ -71,6 +75,7 @@ describe("planConformance", () => {
       kind: "body",
       url: "Attachments/a.png",
       remote: false,
+      pages: [],
     });
   });
 
@@ -98,8 +103,62 @@ describe("planConformance", () => {
     expect(plan({ source: SOURCE }, `see ${SOURCE}`).linkSource).toBe(false);
   });
 
+  it("passes over a profile picture in the body", () => {
+    const body = `![](${AVATAR})\n\nJust words.`;
+    expect(plan({ source: THREAD }, body).picture).toEqual({ kind: "page", pages: [THREAD] });
+  });
+
+  it("looks at a page the text links to after the source", () => {
+    const body = `![](${AVATAR})\n\nRead https://blog.example.org/post.`;
+    expect(plan({ source: THREAD }, body).picture).toEqual({
+      kind: "page",
+      pages: [THREAD, "https://blog.example.org/post"],
+    });
+  });
+
+  it("takes a linked page as somewhere to look even with no source", () => {
+    expect(plan({}, "see https://blog.example.org/post").picture).toEqual({
+      kind: "page",
+      pages: ["https://blog.example.org/post"],
+    });
+  });
+
+  it("skips a note whose only picture is a profile picture", () => {
+    expect(planConformance("a.md", {}, `![](${AVATAR})`, CREATED).kind).toBe("skip");
+  });
+
+  it("drops a cover that is a profile picture and looks again", () => {
+    const p = plan({ ...CLIPPED, source: THREAD, cover: AVATAR }, THREAD);
+    expect(p.dropCover).toBe(true);
+    expect(p.picture).toEqual({ kind: "page", pages: [THREAD] });
+  });
+
+  it("drops a vault cover the caller found was archived from one", () => {
+    const result = planConformance("a.md", { ...CLIPPED, source: THREAD }, THREAD, CREATED, true);
+    expect(result.kind === "plan" && result.plan.dropCover).toBe(true);
+  });
+
   it("finds nothing to do for a note already in the format", () => {
     expect(isEmptyPlan(plan(CLIPPED, `[${SOURCE}](${SOURCE})`))).toBe(true);
+  });
+});
+
+describe("linkedPages", () => {
+  it("unwraps Threads' redirect and skips the site's own profiles", () => {
+    const body =
+      "by [@a](https://www.threads.net/@a) " +
+      "[x](https://l.threads.net/?u=https%3A%2F%2Fnews.example.com%2Fstory&e=AT0)";
+    expect(linkedPages(body, THREAD)).toEqual(["https://news.example.com/story"]);
+  });
+
+  it("skips media files, the source, repeats and trailing punctuation", () => {
+    const body = `${SOURCE} https://a.example/x.jpg https://b.example/p. https://b.example/p`;
+    expect(linkedPages(body, SOURCE)).toEqual(["https://b.example/p"]);
+  });
+
+  it("stops after three", () => {
+    const body = [1, 2, 3, 4].map((n) => `https://s${n}.example/`).join(" ");
+    expect(linkedPages(body, "")).toHaveLength(3);
   });
 });
 
@@ -110,14 +169,20 @@ describe("tagsOf", () => {
 });
 
 describe("appendedBody", () => {
-  const base: ConformPlan = { add: {}, tags: null, picture: { kind: "none" }, linkSource: false };
+  const base: ConformPlan = {
+    add: {},
+    tags: null,
+    picture: { kind: "none" },
+    dropCover: false,
+    linkSource: false,
+  };
 
   it("leaves the body alone when there is nothing to add", () => {
     expect(appendedBody("keep  \n", base, null, SOURCE)).toBe("keep  \n");
   });
 
   it("appends the page picture and the source after the text", () => {
-    const p: ConformPlan = { ...base, picture: { kind: "page", source: SOURCE }, linkSource: true };
+    const p: ConformPlan = { ...base, picture: { kind: "page", pages: [SOURCE] }, linkSource: true };
     expect(appendedBody("\nText\n\n", p, "Att/a.png", SOURCE)).toBe(
       `\nText\n\n![[Att/a.png]]\n\n[${SOURCE}](${SOURCE})\n`
     );
@@ -126,7 +191,7 @@ describe("appendedBody", () => {
   it("embeds the page picture that stood in for a body image", () => {
     const p: ConformPlan = {
       ...base,
-      picture: { kind: "body", url: "https://cdn.example.com/dead.jpg", remote: true },
+      picture: { kind: "body", url: "https://cdn.example.com/dead.jpg", remote: true, pages: [] },
     };
     expect(appendedBody("Text", p, "Att/page.png", SOURCE)).toBe("Text\n\n![[Att/page.png]]\n");
   });
@@ -134,7 +199,7 @@ describe("appendedBody", () => {
   it("does not embed a body image a second time", () => {
     const p: ConformPlan = {
       ...base,
-      picture: { kind: "body", url: "https://cdn.example.com/a.jpg", remote: true },
+      picture: { kind: "body", url: "https://cdn.example.com/a.jpg", remote: true, pages: [] },
     };
     expect(appendedBody("Text", p, null, SOURCE)).toBe("Text");
   });

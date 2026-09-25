@@ -84,21 +84,62 @@ export function readMetaTags(html: string): Map<string, string> {
   return found;
 }
 
+/** Meta's CDNs, which serve Instagram, Threads and Facebook alike. */
+const META_CDN = /(^|\.)(cdninstagram\.com|fbcdn\.net)$/i;
+
+/**
+ * Whether a URL is someone's profile picture rather than a picture of the
+ * thing clipped. A Threads or Instagram post with no media of its own
+ * publishes its author's face as og:image, and a clipper copies avatars into
+ * the body beside the post, so without this a text post's tile is a portrait
+ * of whoever wrote it. Read off the URL alone: Meta files a profile picture
+ * under a `t51.<n>-19` rendition, and the other networks under a path of
+ * their own.
+ */
+export function isAvatarUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname;
+  if (META_CDN.test(host)) return /\/t51\.\d+-19\//.test(path);
+  if (host === "pbs.twimg.com") return path.startsWith("/profile_images/");
+  if (host === "cdn.bsky.app") return path.startsWith("/img/avatar/");
+  // Mastodon, on whichever instance.
+  return path.includes("/accounts/avatars/");
+}
+
+/**
+ * The page's declared social preview images, absolute, in the order a page
+ * is read: og:image, then its aliases, then Twitter's.
+ */
+export function pageImages(html: string, baseUrl: string): string[] {
+  const found = readMetaTags(html);
+  const out: string[] = [];
+  for (const name of ["og:image", "og:image:url", "twitter:image"]) {
+    const raw = found.get(name);
+    if (!raw) continue;
+    try {
+      const absolute = new URL(raw, baseUrl).toString();
+      if (!out.includes(absolute)) out.push(absolute);
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
 /**
  * Pulls the page's declared social preview image. Nearly every modern site
  * publishes one, which makes it the best single cover for a clipping whose
- * body carries no usable image of its own.
+ * body carries no usable image of its own. A profile picture is not one:
+ * a page that offers nothing else has no cover.
  */
 export function extractPageImage(html: string, baseUrl: string): string | null {
-  const found = readMetaTags(html);
-  const raw = found.get("og:image") ?? found.get("og:image:url") ?? found.get("twitter:image");
-  if (!raw) return null;
-
-  try {
-    return new URL(raw, baseUrl).toString();
-  } catch {
-    return null;
-  }
+  return pageImages(html, baseUrl).find((url) => !isAvatarUrl(url)) ?? null;
 }
 
 /**

@@ -2,7 +2,7 @@ import type { MediaCache } from "./cache";
 import { extensionOf, isRenderable } from "./formats";
 import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./normalize";
 import type { CanonicalMedia } from "./normalize";
-import { knownHostThumbnail } from "./page-cover";
+import { isAvatarUrl, knownHostThumbnail } from "./page-cover";
 import type { ClippingRecord } from "./scan";
 
 export interface TileModel {
@@ -179,10 +179,16 @@ function pickCover(record: ClippingRecord, cache: MediaCache): Cover | null {
   let pageThumbnail: string | null = null;
 
   for (const item of media) {
+    // Someone's profile picture, copied in beside their post by a clipper,
+    // is never what the clipping is of.
+    if (isRemote(item.url) && isAvatarUrl(item.url)) continue;
+
     // A file in the vault, embedded as a wikilink. The archive knows its
     // size if it made it; otherwise the tile measures it once it loads.
     if (!isRemote(item.url)) {
       const archived = cache.byFile(item.url);
+      // The same face, archived by an earlier clip and embedded as a file.
+      if (archived && isAvatarUrl(archived.key)) continue;
       if (archived) {
         const cover = localCover(archived);
         if (cover) return cover;

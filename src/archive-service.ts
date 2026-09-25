@@ -19,7 +19,13 @@ import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./core/normalize";
 import { isThreadsUrl, supportsSourceDownload } from "./core/resolve";
 import { sniffVideoUrl } from "./sniff";
 import type { CanonicalMedia } from "./core/normalize";
-import { extractPageImage, knownHostThumbnail, needsPageCover } from "./core/page-cover";
+import {
+  extractPageImage,
+  isAvatarUrl,
+  knownHostThumbnail,
+  needsPageCover,
+  pageImages,
+} from "./core/page-cover";
 import type { ClippingRecord } from "./core/scan";
 import type { OrikoSettings } from "./core/settings";
 import { describeVideoProblems, ytdlpProblem } from "./core/video-problems";
@@ -594,12 +600,44 @@ export class ArchiveService {
     if (known) {
       return this.archiveOne({ key, url: known.url, kind: "image", alt, fallbacks: known.fallbacks }, source);
     }
-    const imageUrl = await this.fetchPageImage(source);
-    return imageUrl ? this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source) : null;
+    // Asked afresh rather than answered from the cache: a copy kept under
+    // this page may be the author's face, archived before those were refused.
+    const html = await this.fetchPageHtml(source);
+    if (html === null) return null;
+    const imageUrl = extractPageImage(html, source);
+    if (!imageUrl) {
+      this.cache.delete(key);
+      return null;
+    }
+    return this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source, true);
   }
 
-  private async archiveOne(media: CanonicalMedia, source: string): Promise<string | null> {
-    const held = this.cache.get(media.key)?.file;
+  /**
+   * Whether a cover file in the vault was archived from someone's profile
+   * picture. The cache knows what each file was fetched under: a body image
+   * under its own URL, which says so, and a page's picture under the page,
+   * which only asking the page again can answer. A page cover found to be
+   * one is forgotten, so the tile stops showing it too.
+   */
+  async isAvatarCover(cover: string, source: string): Promise<boolean> {
+    const entry = this.cache.byFile(normalizePath(cover));
+    if (!entry) return false;
+    if (isAvatarUrl(entry.key)) return true;
+    if (!source || entry.key !== normalizeUrl(source)) return false;
+    const html = await this.fetchPageHtml(source);
+    const first = html === null ? undefined : pageImages(html, source)[0];
+    if (!first || !isAvatarUrl(first)) return false;
+    this.cache.delete(entry.key);
+    return true;
+  }
+
+  /** @param fresh skip the cached copy; the file on disk is still reused by name. */
+  private async archiveOne(
+    media: CanonicalMedia,
+    source: string,
+    fresh = false
+  ): Promise<string | null> {
+    const held = fresh ? undefined : this.cache.get(media.key)?.file;
     if (held && this.app.vault.getFileByPath(normalizePath(held))) return held;
     await this.ensureFolder();
     const [outcome] = await archiveAll([media], source, this.deps(), 1);
@@ -609,12 +647,17 @@ export class ArchiveService {
   }
 
   private async fetchPageImage(pageUrl: string): Promise<string | null> {
+    const html = await this.fetchPageHtml(pageUrl);
+    return html === null ? null : extractPageImage(html, pageUrl);
+  }
+
+  private async fetchPageHtml(pageUrl: string): Promise<string | null> {
     try {
       const response = await requestUrl({ url: pageUrl, method: "GET", throw: false });
       if (response.status < 200 || response.status >= 300) return null;
       const type = response.headers?.["content-type"] ?? "";
       if (type && !type.toLowerCase().includes("html")) return null;
-      return extractPageImage(response.text, pageUrl);
+      return response.text;
     } catch {
       return null;
     }

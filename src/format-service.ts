@@ -116,7 +116,11 @@ export class FormatService {
       if (parsed && typeof parsed === "object") frontmatter = parsed as Record<string, unknown>;
     }
 
-    const conformance = planConformance(file.path, frontmatter, rest, file.stat.ctime);
+    const source = typeof frontmatter.source === "string" ? frontmatter.source.trim() : "";
+    const cover = typeof frontmatter.cover === "string" ? frontmatter.cover.trim() : "";
+    const coverIsAvatar =
+      cover !== "" && !/^https?:\/\//i.test(cover) && (await this.archiver.isAvatarCover(cover, source));
+    const conformance = planConformance(file.path, frontmatter, rest, file.stat.ctime, coverIsAvatar);
     if (conformance.kind === "skip") {
       summary.skipped.push(`${file.basename} (${conformance.reason})`);
       return null;
@@ -141,7 +145,6 @@ export class FormatService {
       typeof frontmatter.title === "string" && frontmatter.title.trim()
         ? frontmatter.title
         : file.basename;
-    const source = typeof frontmatter.source === "string" ? frontmatter.source.trim() : "";
     const found = await this.findPicture(file, plan, source, title);
     const picture = found?.path ?? null;
     if (picture) summary.pictures++;
@@ -152,6 +155,7 @@ export class FormatService {
       }
       if (plan.tags) fm.tags = plan.tags;
       if (picture) fm.cover = picture;
+      else if (plan.dropCover) delete fm.cover;
       if (grid) fm.grid = grid;
     });
     await this.app.vault.process(file, (content) => {
@@ -185,8 +189,9 @@ export class FormatService {
    * The note's picture as a vault path, or null when it needs none or none
    * could be found. A body image already in the vault is used where it is.
    * A body image that cannot be had, a dead link or an embed of a file that
-   * is gone, falls back to the page's own picture, as a note with no image
-   * does. `fromPage` says the picture is not in the body yet.
+   * is gone, falls back to the pages, as a note with no image does: the
+   * source's preview image, then that of each page the text links to.
+   * `fromPage` says the picture is not in the body yet.
    */
   private async findPicture(
     file: TFile,
@@ -201,10 +206,12 @@ export class FormatService {
         ? await this.archiver.archivePicture(picture.url, source, title)
         : this.app.metadataCache.getFirstLinkpathDest(picture.url, file.path)?.path ?? null;
       if (path) return { path, fromPage: false };
-      if (!/^https?:\/\//i.test(source)) return null;
     }
-    const path = await this.archiver.archivePagePicture(source, title);
-    return path ? { path, fromPage: true } : null;
+    for (const page of picture.pages) {
+      const path = await this.archiver.archivePagePicture(page, title);
+      if (path) return { path, fromPage: true };
+    }
+    return null;
   }
 
   /** Puts every changed note back to one side of the run: its path and its content. */
