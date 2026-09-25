@@ -4,7 +4,7 @@ import { appendedBody, isEmptyPlan, planConformance } from "./core/conform";
 import type { ConformPlan } from "./core/conform";
 import type { HistoryEntry } from "./core/history";
 import type { ProgressState } from "./core/progress";
-import { clippingPathFor } from "./core/resolve";
+import { clippingPathFor, noteNameFor } from "./core/resolve";
 import { splitFrontmatter } from "./core/scan";
 import type { OrikoSettings } from "./core/settings";
 import { fileableGrid } from "./core/spaces";
@@ -142,7 +142,9 @@ export class FormatService {
         ? frontmatter.title
         : file.basename;
     const source = typeof frontmatter.source === "string" ? frontmatter.source.trim() : "";
-    const found = await this.findPicture(file, plan, source, title);
+    // The media carry the name the note is about to have.
+    const note = moving ? noteNameFor(title, source) : file.basename;
+    const found = await this.findPicture(file, plan, source, title, note);
     const picture = found?.path ?? null;
     if (picture) summary.pictures++;
 
@@ -192,18 +194,19 @@ export class FormatService {
     file: TFile,
     plan: ConformPlan,
     source: string,
-    title: string
+    title: string,
+    note: string
   ): Promise<{ path: string; fromPage: boolean } | null> {
     const picture = plan.picture;
     if (picture.kind === "none") return null;
     if (picture.kind === "body") {
       const path = picture.remote
-        ? await this.archiver.archivePicture(picture.url, source, title)
+        ? await this.archiver.archivePicture(picture.url, source, title, note)
         : this.app.metadataCache.getFirstLinkpathDest(picture.url, file.path)?.path ?? null;
       if (path) return { path, fromPage: false };
       if (!/^https?:\/\//i.test(source)) return null;
     }
-    const path = await this.archiver.archivePagePicture(source, title);
+    const path = await this.archiver.archivePagePicture(source, title, note);
     return path ? { path, fromPage: true } : null;
   }
 

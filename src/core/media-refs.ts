@@ -174,10 +174,16 @@ export interface OrphanQuery {
  *
  * A thumbnail is not referenced by anything on its own; it belongs to the
  * file it was generated from and lives and dies with it.
+ *
+ * A file named after its note says nothing about who made it, so the cache
+ * vouches for those: anything it archived or derived is the plugin's.
  */
 export function orphanFiles({ live, cache, onDisk }: OrphanQuery): string[] {
   const spoken = new Set(filesForRefs(live, cache));
-  return onDisk.filter((path) => !spoken.has(path) && isPluginOwned(basename(path)));
+  const archived = new Set(cache.flatMap((entry) => [entry.file, entry.thumb].filter(Boolean)));
+  return onDisk.filter(
+    (path) => !spoken.has(path) && (archived.has(path) || isPluginOwned(basename(path)))
+  );
 }
 
 /**

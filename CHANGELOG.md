@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Turn a folder of old notes into clippings.** Run **Format notes in a folder…** from the command palette, or right-click a folder and choose **Format notes with Oriko**. Each note gets the properties a clipping has, a picture as its `cover` (the first image in the note, or else, when there is none or it can no longer be downloaded, the preview image of its source page, saved into your attachment folder), and is filed into your clippings folder just as a new clip would be, on the grid you have open. Anything the note already says is kept, and the only change to its text is a picture and a source link added at the end when they are missing. Notes with no source link and no picture are left alone and listed. ⌘Z on the wall undoes the whole run.
+- **Rename existing media after their notes.** Right-click a folder and choose **Rename media after their notes**, or run **Rename media after their notes in a folder…**, to give the media of every clipping in it the same `<note name> <id>` name. It shows what it will rename first; generated posters and thumbnails move with their file, and the notes' embeds and `cover` follow, even with Obsidian's automatic link updates off. A file two clippings share, or one Oriko did not make, keeps its name. It cannot be undone.
+
+### Changed
+- **Downloaded media are named after their note.** A picture or video Oriko downloads is now saved as `<note name> <id>.jpg` rather than under a string of hex, so the attachment folder says which clipping each file belongs to. Files downloaded before keep their names and are still found. **Remove orphaned media** recognises note-named files by the device's download records rather than by their name.
 
 ## [0.1.64] - 2026-09-19
 

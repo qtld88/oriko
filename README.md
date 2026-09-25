@@ -76,15 +76,17 @@ Any frontmatter property can become a filter. Enable properties under **Settings
 
 ## Downloads
 
-Remote media is copied into your attachment folder under a name derived from its URL, so the same asset shared by several clippings is stored once. Posters and thumbnails are generated for videos and GIFs, and downloads above a size cap are skipped.
+Remote media is copied into your attachment folder and named after the note it belongs to, `<note name> <id>.jpg`, so the folder tells you which clipping each file is for. The id comes from the media's URL, so the same asset shared by several clippings is stored once, and two pictures of one note never collide. Posters and thumbnails are generated for videos and GIFs, and downloads above a size cap are skipped.
 
 **Optional tools.** [yt-dlp](https://github.com/yt-dlp/yt-dlp) fetches the full video of a clipped post, and [ffmpeg](https://ffmpeg.org) renders previews for formats the app cannot play. Install them with your package manager: `brew install yt-dlp ffmpeg` on macOS, winget or scoop on Windows, apt on Linux. Oriko finds them on PATH and in common install locations, and **Settings → Downloads** takes an explicit path if yours is installed elsewhere.
 
 **Phones get videos through a desktop.** Some videos can only be fetched on desktop, through the community resolvers or yt-dlp. A clip made on your phone gets its poster right away; the next time a desktop opens the vault, it downloads the full video. Once that file syncs back, the phone adopts it automatically and the tile plays. The video has to be within your sync service's file size limit.
 
-**Cleanup.** **Remove orphaned media** lists files no clipping references and moves them to the trash after a confirmation.
+**Renaming older media.** Media downloaded before files were named after their notes keeps its old name, a string of hex, and is still found. To bring it in line, right-click a folder and choose **Rename media after their notes**, or run **Rename media after their notes in a folder…**. It lists what it will rename before touching anything. Every file only one clipping uses takes that clipping's name, its generated posters and thumbnails move with it, and the note's embeds and `cover` follow. Files two clippings share, and files Oriko did not make, keep their names. Run it again after renaming a note and its media follow. There is no undo, so back up the folder first.
 
-**The note body is never touched.** Oriko writes a note's content once, when it creates it. After that it edits only frontmatter, through Obsidian's own frontmatter API: the `grid` key when you move a clipping, and the properties you edit yourself from the wall. The one exception is formatting a folder, which you ask for, and which only adds to the end of a note.
+**Cleanup.** **Remove orphaned media** lists files no clipping references and moves them to the trash after a confirmation. It only offers files it can prove Oriko made: older hex-named files by their name, note-named files by this device's download records. A note-named file another device downloaded is left alone here and swept on that device.
+
+**The note body is never touched.** Oriko writes a note's content once, when it creates it. After that it edits only frontmatter, through Obsidian's own frontmatter API: the `grid` key when you move a clipping, and the properties you edit yourself from the wall. The two exceptions are commands you run yourself: formatting a folder, which only adds to the end of a note, and renaming media, which only rewrites the links to the files it renamed.
 
 ## Privacy
 

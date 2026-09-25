@@ -20,6 +20,8 @@ export interface ArchiveDeps {
   write: (path: string, data: ArrayBuffer) => Promise<void>;
   folder: string;
   maxBytes: number;
+  /** The note the media belongs to, whose name the files carry. */
+  note?: string;
 }
 
 export interface ArchiveOutcome {
@@ -43,26 +45,54 @@ const SOURCE_VIDEO_EXTENSIONS = ["mp4", "webm", "mov", "m4v", "mkv"];
  * per-device but the attachment folder syncs, so a device that cannot run
  * yt-dlp can still adopt the file another device downloaded.
  */
-export function sourceVideoCandidates(key: string, folder: string): string[] {
+export function sourceVideoCandidates(key: string, folder: string, note = ""): string[] {
   const hash = hashUrl(key);
-  return SOURCE_VIDEO_EXTENSIONS.map((ext) => `${folder}/${hash}-video.${ext}`);
+  const named = noteFilePrefix(note);
+  const legacy = SOURCE_VIDEO_EXTENSIONS.map((ext) => `${folder}/${hash}-video.${ext}`);
+  if (!named) return legacy;
+  return [...SOURCE_VIDEO_EXTENSIONS.map((ext) => `${folder}/${named} ${hash}.${ext}`), ...legacy];
+}
+
+/** Where a source video downloaded for this note lands. */
+export function sourceVideoPath(key: string, folder: string, extension: string, note = ""): string {
+  const hash = hashUrl(key);
+  const named = noteFilePrefix(note);
+  return named ? `${folder}/${named} ${hash}.${extension}` : `${folder}/${hash}-video.${extension}`;
 }
 
 /** Statuses that hotlink protection returns and that a Referer may fix. */
 const RETRYABLE = new Set([401, 403, 429]);
 const UNSAFE_CHARS = /[^a-zA-Z0-9._-]/g;
 const MAX_BASENAME = 80;
+/** Characters a vault file name or a wikilink cannot carry. */
+const UNSAFE_NOTE_CHARS = /[\\/:*?"<>|#^[\]]/g;
+const MAX_NOTE_PREFIX = 60;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
- * `<12 hex of the normalized url>-<original basename>`. The hash comes from
- * the normalized key, so every size variant of one asset maps to one file,
- * and render-time repair can find that file from any variant's URL alone.
+ * The note's name made safe to start a file name with, or "" when nothing
+ * of it survives.
  */
-export function archiveFilename(media: CanonicalMedia): string {
+export function noteFilePrefix(note: string): string {
+  return note
+    .replace(UNSAFE_NOTE_CHARS, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_NOTE_PREFIX)
+    .trim();
+}
+
+/**
+ * `<note name> <12 hex of the normalized url>.<ext>`, so a file says which
+ * clipping it belongs to. Without a note it is the older
+ * `<12 hex>-<original basename>`. The hash comes from the normalized key, so
+ * every size variant of one asset maps to one file, and two media of one
+ * note never share a name.
+ */
+export function archiveFilename(media: CanonicalMedia, note = ""): string {
   let base = "";
   try {
     base = decodeURIComponent(new URL(media.url).pathname.split("/").pop() ?? "");
@@ -75,6 +105,9 @@ export function archiveFilename(media: CanonicalMedia): string {
   if (!/\.[a-z0-9]{2,5}$/i.test(base)) {
     base += `.${defaultExtension(media.kind)}`;
   }
+  const named = noteFilePrefix(note);
+  if (named) return `${named} ${hashUrl(media.key)}${base.slice(base.lastIndexOf("."))}`;
+
   if (base.length > MAX_BASENAME) {
     const dot = base.lastIndexOf(".");
     base = base.slice(0, 60) + base.slice(dot);
@@ -122,12 +155,14 @@ export async function archiveOne(
   const base: ArchiveOutcome = { key: media.key, kind: media.kind };
   const candidates = [media.url, ...(media.fallbacks ?? [])];
 
-  const pathFor = (url: string): string =>
-    `${deps.folder}/${archiveFilename({ ...media, url })}`;
+  const pathFor = (url: string, note = deps.note ?? ""): string =>
+    `${deps.folder}/${archiveFilename({ ...media, url }, note)}`;
 
+  // A copy archived before files carried their note's name is adopted as is.
   for (const url of candidates) {
-    const path = pathFor(url);
-    if (await deps.exists(path)) return { ...base, file: path };
+    for (const path of new Set([pathFor(url), pathFor(url, "")])) {
+      if (await deps.exists(path)) return { ...base, file: path };
+    }
   }
 
   let lastFailure = "no source url";
