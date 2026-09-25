@@ -124,19 +124,18 @@ export function isEmptyPlan(plan: ConformPlan): boolean {
 }
 
 /**
- * Lines to append to the body. Existing text is never edited: the picture is
- * embedded only when it came from the page, since a body image is already
- * in the body, and the source is linked only when the body does not already
- * name it.
+ * Lines to append to the body. Existing text is never edited: `embed` is a
+ * picture fetched from the page, since a body image is already in the body,
+ * and the source is linked only when the body does not already name it.
  */
 export function appendedBody(
   body: string,
   plan: ConformPlan,
-  picturePath: string | null,
+  embed: string | null,
   source: string
 ): string {
   const lines: string[] = [];
-  if (plan.picture.kind === "page" && picturePath) lines.push(`![[${picturePath}]]`);
+  if (embed) lines.push(`![[${embed}]]`);
   if (plan.linkSource) lines.push(`[${source}](${source})`);
   if (lines.length === 0) return body;
 

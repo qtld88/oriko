@@ -123,12 +123,20 @@ describe("appendedBody", () => {
     );
   });
 
+  it("embeds the page picture that stood in for a body image", () => {
+    const p: ConformPlan = {
+      ...base,
+      picture: { kind: "body", url: "https://cdn.example.com/dead.jpg", remote: true },
+    };
+    expect(appendedBody("Text", p, "Att/page.png", SOURCE)).toBe("Text\n\n![[Att/page.png]]\n");
+  });
+
   it("does not embed a body image a second time", () => {
     const p: ConformPlan = {
       ...base,
       picture: { kind: "body", url: "https://cdn.example.com/a.jpg", remote: true },
     };
-    expect(appendedBody("Text", p, "Att/a.jpg", SOURCE)).toBe("Text");
+    expect(appendedBody("Text", p, null, SOURCE)).toBe("Text");
   });
 
   it("writes into an empty body without leading blank lines", () => {

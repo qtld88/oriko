@@ -142,7 +142,8 @@ export class FormatService {
         ? frontmatter.title
         : file.basename;
     const source = typeof frontmatter.source === "string" ? frontmatter.source.trim() : "";
-    const picture = await this.findPicture(file, plan, source, title);
+    const found = await this.findPicture(file, plan, source, title);
+    const picture = found?.path ?? null;
     if (picture) summary.pictures++;
 
     await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
@@ -156,7 +157,7 @@ export class FormatService {
     await this.app.vault.process(file, (content) => {
       const split = splitFrontmatter(content);
       const head = content.slice(0, content.length - split.rest.length);
-      return head + appendedBody(split.rest, plan, picture, source);
+      return head + appendedBody(split.rest, plan, found?.fromPage ? picture : null, source);
     });
 
     const from = file.path;
@@ -183,19 +184,27 @@ export class FormatService {
   /**
    * The note's picture as a vault path, or null when it needs none or none
    * could be found. A body image already in the vault is used where it is.
+   * A body image that cannot be had, a dead link or an embed of a file that
+   * is gone, falls back to the page's own picture, as a note with no image
+   * does. `fromPage` says the picture is not in the body yet.
    */
   private async findPicture(
     file: TFile,
     plan: ConformPlan,
     source: string,
     title: string
-  ): Promise<string | null> {
+  ): Promise<{ path: string; fromPage: boolean } | null> {
     const picture = plan.picture;
     if (picture.kind === "none") return null;
-    if (picture.kind === "page") return this.archiver.archivePagePicture(picture.source, title);
-    if (picture.remote) return this.archiver.archivePicture(picture.url, source, title);
-    const linked = this.app.metadataCache.getFirstLinkpathDest(picture.url, file.path);
-    return linked?.path ?? null;
+    if (picture.kind === "body") {
+      const path = picture.remote
+        ? await this.archiver.archivePicture(picture.url, source, title)
+        : this.app.metadataCache.getFirstLinkpathDest(picture.url, file.path)?.path ?? null;
+      if (path) return { path, fromPage: false };
+      if (!/^https?:\/\//i.test(source)) return null;
+    }
+    const path = await this.archiver.archivePagePicture(source, title);
+    return path ? { path, fromPage: true } : null;
   }
 
   /** Puts every changed note back to one side of the run: its path and its content. */
