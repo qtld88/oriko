@@ -115,6 +115,16 @@ describe("orphanFiles", () => {
     expect(orphanFiles({ live: liveRefs([]), cache: [], onDisk: [pasted] })).toEqual([pasted]);
   });
 
+  it("sweeps a file named after its note, which only the cache vouches for", () => {
+    const named = `${FOLDER}/My clipping cccccccccccc.jpg`;
+    const poster = `${FOLDER}/My clipping cccccccccccc.poster.webp`;
+    const known = [entry("https://cdn.example.com/three.jpg", named, poster)];
+    expect(orphanFiles({ live: liveRefs([]), cache: known, onDisk: [named, poster] })).toEqual([
+      named,
+      poster,
+    ]);
+  });
+
   it("never touches a file the plugin did not make", () => {
     const mine = `${FOLDER}/holiday photo.jpg`;
     expect(orphanFiles({ live: liveRefs([]), cache: [], onDisk: [mine] })).toEqual([]);

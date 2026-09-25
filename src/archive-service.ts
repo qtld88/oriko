@@ -1,5 +1,5 @@
 import { App, Notice, Platform, TFile, normalizePath, requestUrl } from "obsidian";
-import { ArchiveDeps, archiveAll, sourceVideoCandidates } from "./core/archive";
+import { ArchiveDeps, archiveAll, sourceVideoCandidates, sourceVideoPath } from "./core/archive";
 import { MediaCache } from "./core/cache";
 import { readDimensions } from "./core/dimensions";
 import {
@@ -14,9 +14,8 @@ import {
 import { posterPath, previewPath, renderPoster, renderThumbnail, thumbPath } from "./core/derive";
 import { extensionOf, mimeForPath, needsPreview } from "./core/formats";
 import { ClippingIndex } from "./index-store";
-import { hashUrl } from "./core/hash";
 import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./core/normalize";
-import { isThreadsUrl, supportsSourceDownload } from "./core/resolve";
+import { isThreadsUrl, noteNameFor, supportsSourceDownload } from "./core/resolve";
 import { sniffVideoUrl } from "./sniff";
 import type { CanonicalMedia } from "./core/normalize";
 import { extractPageImage, knownHostThumbnail, needsPageCover } from "./core/page-cover";
@@ -32,6 +31,12 @@ const PROBLEM_NOTICE_MS = 10000;
 
 /** Where a video problem goes: straight to a toast, or into a pass's pile. */
 type ProblemSink = (problem: VideoProblem) => void;
+
+/** The name of the note a record lives in, which its media are named after. */
+function noteNameOf(record: ClippingRecord): string {
+  const name = record.path.slice(record.path.lastIndexOf("/") + 1);
+  return name.replace(/\.md$/i, "");
+}
 
 export interface ArchiveSummary {
   ok: number;
@@ -96,8 +101,9 @@ export class ArchiveService {
     }
   }
 
-  private deps(): ArchiveDeps {
+  private deps(note = ""): ArchiveDeps {
     return {
+      note,
       fetch: async (url, headers) => {
         const response = await requestUrl({ url, method: "GET", headers, throw: false });
         return {
@@ -264,7 +270,7 @@ export class ArchiveService {
     }
 
     await this.ensureFolder();
-    const outcomes = await archiveAll(canonical, record.source, this.deps(), 4, (done, total) =>
+    const outcomes = await archiveAll(canonical, record.source, this.deps(noteNameOf(record)), 4, (done, total) =>
       this.onRecordProgress?.(done, total)
     );
     for (const outcome of outcomes) this.cache.mergeOutcome(outcome);
@@ -291,7 +297,7 @@ export class ArchiveService {
     retryFailed: boolean,
     report: ProblemSink
   ): Promise<void> {
-    await this.downloadSourceVideoFor(record.source, retryFailed, record.title, report);
+    await this.downloadSourceVideoFor(record.source, retryFailed, record.title, report, noteNameOf(record));
   }
 
   /**
@@ -303,7 +309,8 @@ export class ArchiveService {
     source: string,
     retryFailed: boolean,
     title = "",
-    report: ProblemSink = this.announceNow
+    report: ProblemSink = this.announceNow,
+    note = ""
   ): Promise<string | null> {
     if (!source || !supportsSourceDownload(source)) return null;
 
@@ -316,7 +323,7 @@ export class ArchiveService {
     // Checked before any recorded failure is believed, because "yt-dlp not
     // available" was a fact about this device, not about the post.
     const folder = normalizePath(this.settings().attachmentFolder);
-    for (const candidate of sourceVideoCandidates(key, folder)) {
+    for (const candidate of sourceVideoCandidates(key, folder, note)) {
       const path = normalizePath(candidate);
       if (this.app.vault.getFileByPath(path)) {
         this.cache.mergeOutcome({ key, kind: "video", file: path });
@@ -345,7 +352,7 @@ export class ArchiveService {
     }
 
     await this.ensureFolder();
-    const path = normalizePath(`${folder}/${hashUrl(key)}-video.${result.extension}`);
+    const path = normalizePath(sourceVideoPath(key, folder, result.extension, note));
 
     if (!this.app.vault.getFileByPath(path)) {
       await this.app.vault.createBinary(path, result.data);
@@ -446,12 +453,14 @@ export class ArchiveService {
       kind: m.kind,
       alt: "",
     }));
+    // The note is written after its media, under the name capture gives it.
+    const note = noteNameFor(title, source);
 
     let haveVideo = false;
 
     if (canonical.length > 0) {
       await this.ensureFolder();
-      const outcomes = await archiveAll(canonical, source, this.deps(), 4, onProgress);
+      const outcomes = await archiveAll(canonical, source, this.deps(note), 4, onProgress);
       outcomes.forEach((outcome, index) => {
         this.cache.mergeOutcome(outcome);
         if (!outcome.file) return;
@@ -466,7 +475,7 @@ export class ArchiveService {
     let sourceVideo: string | null = null;
     if (!haveVideo && supportsSourceDownload(source)) {
       onStage?.("Fetching video…");
-      sourceVideo = await this.downloadSourceVideoFor(source, true, title);
+      sourceVideo = await this.downloadSourceVideoFor(source, true, title, this.announceNow, note);
     }
 
     // Scoped to what was just archived: capture must never wait behind the
@@ -553,17 +562,17 @@ export class ArchiveService {
     }
 
     await this.ensureFolder();
-    const [outcome] = await archiveAll([candidate], record.source, this.deps(), 1);
+    const [outcome] = await archiveAll([candidate], record.source, this.deps(noteNameOf(record)), 1);
     if (outcome) this.cache.mergeOutcome(outcome);
   }
 
   /**
    * Downloads one picture for a note being formatted and returns its vault
    * path, or null. Keyed like every other archived asset, so a picture
-   * already on disk is not fetched a second time.
+   * already on disk is not fetched a second time. `note` names the file.
    */
-  async archivePicture(url: string, source: string, alt = ""): Promise<string | null> {
-    return this.archiveOne({ key: normalizeUrl(url), url, kind: "image", alt }, source);
+  async archivePicture(url: string, source: string, alt = "", note = ""): Promise<string | null> {
+    return this.archiveOne({ key: normalizeUrl(url), url, kind: "image", alt }, source, note);
   }
 
   /**
@@ -571,21 +580,21 @@ export class ArchiveService {
    * resolvePageCover finds it and kept under the same key, so the tile and
    * the note agree on which file it is.
    */
-  async archivePagePicture(source: string, alt = ""): Promise<string | null> {
+  async archivePagePicture(source: string, alt = "", note = ""): Promise<string | null> {
     const key = normalizeUrl(source);
     const known = knownHostThumbnail(source);
     if (known) {
-      return this.archiveOne({ key, url: known.url, kind: "image", alt, fallbacks: known.fallbacks }, source);
+      return this.archiveOne({ key, url: known.url, kind: "image", alt, fallbacks: known.fallbacks }, source, note);
     }
     const imageUrl = await this.fetchPageImage(source);
-    return imageUrl ? this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source) : null;
+    return imageUrl ? this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source, note) : null;
   }
 
-  private async archiveOne(media: CanonicalMedia, source: string): Promise<string | null> {
+  private async archiveOne(media: CanonicalMedia, source: string, note = ""): Promise<string | null> {
     const held = this.cache.get(media.key)?.file;
     if (held && this.app.vault.getFileByPath(normalizePath(held))) return held;
     await this.ensureFolder();
-    const [outcome] = await archiveAll([media], source, this.deps(), 1);
+    const [outcome] = await archiveAll([media], source, this.deps(note), 1);
     if (!outcome) return null;
     this.cache.mergeOutcome(outcome);
     return outcome.file ?? null;
