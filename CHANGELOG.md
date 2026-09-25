@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Downloaded media are named after their note.** A picture or video Oriko downloads is now saved as `<note name> <id>.jpg` rather than under a string of hex, so the attachment folder says which clipping each file belongs to. Files downloaded before keep their names and are still found.
+- **Rename existing media after their notes.** Right-click a folder and choose **Rename media after their notes**, or run **Rename media after their notes in a folder…**, to give the media of every clipping in it the same `<note name> <id>` name. It shows what it will rename first, and the notes' embeds and `cover` follow. A file two clippings share keeps its name.
 
 ## [0.1.64] - 2026-09-19
 

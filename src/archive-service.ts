@@ -76,6 +76,11 @@ export class ArchiveService {
     for (const cb of this.listeners) cb();
   }
 
+  /** For a change made to the cache from outside, such as renamed files. */
+  notifyChanged(): void {
+    this.emit();
+  }
+
   private cachePath(): string {
     return normalizePath(`${this.cacheDir}/${CACHE_FILE}`);
   }

@@ -50,6 +50,8 @@ Anything that can open a url can clip. `obsidian://oriko?url=<percent-encoded pa
 
 Notes you wrote before Oriko, or saved with another tool, can join the wall. Run **Format notes in a folder…** from the command palette, or right-click a folder and choose **Format notes with Oriko**. Every note in it gets the properties a clipping carries, keeping whatever it already says, and a picture as its `cover`: the first image in the note, or else, when there is none or it can no longer be downloaded, the preview image of the page its `source` links to, saved into your attachment folder. Then it is filed into your clippings folder the way a new clip is, named after its title and on the grid you have open. A picture from the page and a link to the source are added at the end of the note when missing; nothing else in its text changes. A note with no source link and no picture is left alone and listed in the summary, and ⌘Z on the wall undoes the whole run.
 
+Media Oriko downloads are named after their note, `<note name> <id>.jpg`. To bring media downloaded before that in line, right-click a folder and choose **Rename media after their notes**, or run **Rename media after their notes in a folder…**: every file only one clipping uses takes that clipping's name, and its embeds and `cover` follow.
+
 ## The Wall
 
 Every clipping is a tile: pan and pinch on a phone, scroll and zoom on a desktop, and click or tap a tile to open it full screen with its properties and actions. Videos can autoplay muted while they are in view, respecting Reduce Motion. Select many at once with a drag on desktop or a long press on mobile, then move, export or delete them together.
