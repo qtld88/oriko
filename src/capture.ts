@@ -35,6 +35,15 @@ import {
 import type { ProgressState } from "./core/progress";
 import type { OrikoSettings } from "./core/settings";
 import { scanAvailable, scanPage } from "./page-scanner";
+import { youtubeVideoId } from "./core/page-cover";
+import {
+  YOUTUBE_PLAYER_URL,
+  parseCaptions,
+  parsePlayerResponse,
+  transcriptMarkdown,
+  youtubePlayerBody,
+} from "./core/youtube";
+import type { YouTubeDetails } from "./core/youtube";
 
 /**
  * Identifies the plugin honestly rather than impersonating a known crawler.
@@ -329,6 +338,9 @@ export class CaptureService {
     const insta = instagramPost(url);
     if (insta) return this.resolveInstagram(insta, url);
 
+    const video = youtubeVideoId(url);
+    if (video) return this.resolveYouTube(video, url);
+
     if (amazonProduct(url)) {
       const product = await this.resolveAmazon(url);
       if (product && product.media.length > 0) return product;
@@ -380,6 +392,53 @@ export class CaptureService {
     // by a local yt-dlp, keyed off the source URL, so nothing here needs a
     // third-party mirror.
     return base;
+  }
+
+  /**
+   * The page still supplies the cover and the video; the player endpoint
+   * adds what its tags cut short. Either half failing leaves the other.
+   */
+  private async resolveYouTube(videoId: string, url: string): Promise<ResolvedLink | null> {
+    const [page, details] = await Promise.all([
+      this.resolvePage(url),
+      this.youtubeDetails(videoId),
+    ]);
+    if (!page || !details) return page;
+
+    const transcript = details.captionUrl ? await this.youtubeTranscript(details.captionUrl) : "";
+    return {
+      ...page,
+      title: page.title || details.title,
+      author: page.author || details.author,
+      body: details.description,
+      transcript,
+    };
+  }
+
+  private async youtubeDetails(videoId: string): Promise<YouTubeDetails | null> {
+    try {
+      const response = await requestUrl({
+        url: YOUTUBE_PLAYER_URL,
+        method: "POST",
+        contentType: "application/json",
+        body: youtubePlayerBody(videoId),
+        throw: false,
+      });
+      if (response.status < 200 || response.status >= 300) return null;
+      return parsePlayerResponse(response.json);
+    } catch {
+      return null;
+    }
+  }
+
+  private async youtubeTranscript(captionUrl: string): Promise<string> {
+    try {
+      const response = await requestUrl({ url: captionUrl, method: "GET", throw: false });
+      if (response.status < 200 || response.status >= 300) return "";
+      return transcriptMarkdown(parseCaptions(response.text));
+    } catch {
+      return "";
+    }
   }
 
   private async resolveX(

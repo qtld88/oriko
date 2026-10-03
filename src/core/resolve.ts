@@ -18,6 +18,10 @@ export interface ResolvedLink {
   author: string;
   published: string;
   media: ResolvedMedia[];
+  /** The full text for the note body, when longer than `description`. */
+  body?: string;
+  /** Markdown transcript, written under its own heading at the end. */
+  transcript?: string;
 }
 
 /** Parameters that identify the sharer, not the content. */
@@ -587,7 +591,8 @@ export function buildNote(
   if (grid) lines.push(`grid: ${yamlString(grid)}`);
   lines.push("---", "");
 
-  if (link.description) lines.push(link.description, "");
+  const body = link.body || link.description;
+  if (body) lines.push(body, "");
 
   for (const item of link.media) {
     // Prefer the archived file: an embed of a local path keeps playing after
@@ -602,6 +607,7 @@ export function buildNote(
   }
 
   lines.push(`[${link.url}](${link.url})`, "");
+  if (link.transcript) lines.push("## Transcript", "", link.transcript, "");
   return lines.join("\n");
 }
 

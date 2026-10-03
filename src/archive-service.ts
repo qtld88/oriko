@@ -346,13 +346,10 @@ export class ArchiveService {
       : await this.ytdlpVideo(source, key, (kind) => report({ kind, source, title }));
     if (!result) return null;
 
-    if (result.data.byteLength > this.settings().maxBytes) {
-      this.cache.mergeOutcome({
-        key,
-        kind: "video",
-        failed: `too large (${result.data.byteLength} bytes)`,
-      });
-      report({ kind: "too-large", source, title, bytes: result.data.byteLength });
+    const bytes = "tooLarge" in result ? result.tooLarge : result.data.byteLength;
+    if ("tooLarge" in result || bytes > this.settings().maxBytes) {
+      this.cache.mergeOutcome({ key, kind: "video", failed: `too large (${bytes} bytes)` });
+      report({ kind: "too-large", source, title, bytes });
       return null;
     }
 
@@ -377,7 +374,7 @@ export class ArchiveService {
     source: string,
     key: string,
     onProblem: (kind: "refused" | "timed-out") => void
-  ): Promise<{ data: ArrayBuffer; extension: string } | null> {
+  ): Promise<{ data: ArrayBuffer; extension: string } | { tooLarge: number } | null> {
     if (!conversionAvailable() || !ytdlpPath()) {
       // Recorded rather than skipped silently, so a missing tool is
       // diagnosable from the cache instead of looking like nothing happened.
@@ -385,7 +382,8 @@ export class ArchiveService {
       return null;
     }
 
-    const result = await downloadSourceVideo(source);
+    const result = await downloadSourceVideo(source, this.settings().maxBytes);
+    if (!result.ok && result.tooLarge !== undefined) return { tooLarge: result.tooLarge };
     if (!result.ok) {
       // Only a refusal or a timeout is announced. A post with no video in it
       // fails the same way every time and has nothing to tell the user.

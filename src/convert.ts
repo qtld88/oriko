@@ -254,11 +254,14 @@ function runCapturing(command: string, args: string[]): Promise<CapturedRun> {
   });
 }
 
-export const DOWNLOAD_TIMEOUT_MS = 180000;
+export const DOWNLOAD_TIMEOUT_MS = 60000;
+
+/** Marks the line yt-dlp prints with the chosen format's size, before downloading. */
+const SIZE_LINE = "oriko-size:";
 
 export type SourceVideoDownload =
   | { ok: true; data: ArrayBuffer; extension: string }
-  | { ok: false; stderr: string; timedOut: boolean };
+  | { ok: false; stderr: string; timedOut: boolean; tooLarge?: number };
 
 /**
  * Downloads a post's video with yt-dlp, which speaks these sites natively.
@@ -271,7 +274,10 @@ export type SourceVideoDownload =
  * so Obsidian never sees a half-written file and the bytes are handed to
  * the vault API like any other download.
  */
-export async function downloadSourceVideo(pageUrl: string): Promise<SourceVideoDownload> {
+export async function downloadSourceVideo(
+  pageUrl: string,
+  maxBytes: number
+): Promise<SourceVideoDownload> {
   const nothing: SourceVideoDownload = { ok: false, stderr: "", timedOut: false };
   const ytdlp = ytdlpPath();
   const fs = nodeRequire("fs") as FsModule | null;
@@ -289,7 +295,14 @@ export async function downloadSourceVideo(pageUrl: string): Promise<SourceVideoD
       "mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
       "-o",
       `${dir}/media.%(ext)s`,
+      // yt-dlp refuses an oversized format before fetching a byte of it.
+      // Checking after the download instead spent the whole timeout pulling
+      // gigabytes of an hour-long video only to throw them away.
+      "--max-filesize",
+      String(maxBytes),
       "--no-simulate",
+      "--print",
+      `video:${SIZE_LINE}%(filesize,filesize_approx)s`,
       "--print",
       "after_move:filepath",
       pageUrl,
@@ -299,8 +312,15 @@ export async function downloadSourceVideo(pageUrl: string): Promise<SourceVideoD
     // timed-out download from a post that simply has no video.
     if (!run.ok) return { ok: false, stderr: run.stderr, timedOut: run.timedOut };
 
-    const file = run.stdout.trim().split("\n").pop()?.trim();
-    if (!file || !fs.existsSync(file)) return nothing;
+    const lines = run.stdout.trim().split("\n").map((line) => line.trim());
+    const file = lines[lines.length - 1];
+    if (!file || file.startsWith(SIZE_LINE) || !fs.existsSync(file)) {
+      // The refusal itself is silent; the size line is the only trace of it.
+      const size = Number(lines.find((line) => line.startsWith(SIZE_LINE))?.slice(SIZE_LINE.length));
+      return Number.isFinite(size) && size > maxBytes
+        ? { ok: false, stderr: "", timedOut: false, tooLarge: size }
+        : nothing;
+    }
 
     const buffer = fs.readFileSync(file);
     const data = buffer.buffer.slice(
