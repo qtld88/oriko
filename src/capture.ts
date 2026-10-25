@@ -25,6 +25,7 @@ import {
   directMediaLink,
   fxApiUrl,
   isHttpUrl,
+  isProfilePicture,
   noteNameFor,
   parseAmazonPage,
   parseFxTweet,
@@ -281,9 +282,15 @@ export class CaptureService {
     const sorting = this.classifier
       .classify(clippingState(link.title, link.description, link.url))
       .catch(() => ({ verdict: NO_VERDICT, outcome: "unavailable" as SortOutcome }));
+    // With videos off, a video the page names outright gives way to the
+    // picture beside it. A video that is all there is, as when a video
+    // address is pasted, is kept: that paste asked for it.
+    const pictures = link.media.filter((item) => item.kind === "image");
+    const wanted =
+      !this.settings().keepVideos && pictures.length > 0 ? pictures : link.media;
     const archived = await this.archiver.archiveResolved(
       link.url,
-      link.media,
+      wanted,
       (done, total) =>
         this.report(0.3 + (done / Math.max(1, total)) * 0.5, `Downloading ${done}/${total}…`),
       // The work after the downloads announces itself, so the bar can never
@@ -292,7 +299,7 @@ export class CaptureService {
       link.title
     );
 
-    const media = link.media.map((item) => ({
+    let media = wanted.map((item) => ({
       ...item,
       localPath: archived.byUrl.get(item.url),
     }));
@@ -304,6 +311,16 @@ export class CaptureService {
         url: link.url,
         kind: "video" as const,
         localPath: archived.sourceVideo,
+      });
+    } else if (archived.sourceStill) {
+      // A still of that video leads in its place, and becomes the cover. The
+      // avatar Threads names as the page's picture is dropped: it is a face,
+      // not the post.
+      media = media.filter((item) => !isProfilePicture(item.url));
+      media.unshift({
+        url: link.url,
+        kind: "image" as const,
+        localPath: archived.sourceStill,
       });
     }
 

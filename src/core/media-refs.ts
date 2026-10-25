@@ -1,6 +1,6 @@
 import type { CacheEntry } from "./cache";
 import { extensionOf, isRenderable } from "./formats";
-import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./normalize";
+import { dedupeMedia, normalizeUrl, sourceStillKeyFor, sourceVideoKeyFor } from "./normalize";
 import type { ClippingRecord } from "./scan";
 
 /**
@@ -77,10 +77,14 @@ export function liveRefs(
   for (const record of records) {
     if (record.source) {
       const videoKey = sourceVideoKeyFor(record.source);
+      const stillKey = sourceStillKeyFor(record.source);
       keys.add(videoKey);
+      keys.add(stillKey);
       // The page's own preview image, needed only while nothing better has
       // been archived for the same post.
-      if (!videoCovers(byKey.get(videoKey))) keys.add(normalizeUrl(record.source));
+      if (!videoCovers(byKey.get(videoKey)) && !byKey.get(stillKey)?.file) {
+        keys.add(normalizeUrl(record.source));
+      }
     }
 
     // Deduped through the same path the archiver used, so the keys match.
@@ -145,6 +149,9 @@ export function savableFiles(
 ): string[] {
   const video = record.source ? cache.get(sourceVideoKeyFor(record.source)) : undefined;
   if (video?.file) return [video.file];
+  // A still kept in the video's place is the same post's media, one hat down.
+  const still = record.source ? cache.get(sourceStillKeyFor(record.source)) : undefined;
+  if (still?.file) return [still.file];
 
   const paths: string[] = [];
   // Looked up through the same dedupe the archiver used, so the keys match;

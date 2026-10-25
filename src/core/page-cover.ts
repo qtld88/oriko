@@ -1,4 +1,4 @@
-import { dedupeMedia, sourceVideoKeyFor } from "./normalize";
+import { dedupeMedia, sourceStillKeyFor, sourceVideoKeyFor } from "./normalize";
 import type { MediaRef } from "./scan";
 
 export interface ThumbnailCandidate {
@@ -180,5 +180,6 @@ export function needsPageCover(
   // tile shows it ahead of anything fetched for the page.
   if (record.media.some((media) => !/^https?:\/\//i.test(media.url))) return false;
   if (archivedFile(sourceVideoKeyFor(record.source))) return false;
+  if (archivedFile(sourceStillKeyFor(record.source))) return false;
   return !dedupeMedia(record.media).some((media) => archivedFile(media.key));
 }

@@ -213,6 +213,35 @@ export function supportsSourceDownload(url: string): boolean {
   }
 }
 
+const META_CDN = /(^|\.)(cdninstagram\.com|fbcdn\.net)$/i;
+/** Meta files a profile picture under `t51.<n>-19`; a post's own media is `-15`. */
+const PROFILE_PATH = /\/t51\.\d+-19\//;
+
+/**
+ * Whether a URL is someone's profile picture on Meta's CDN.
+ *
+ * Threads names the author's avatar as og:image on every post whose media is
+ * a video, so taken at its word the page's picture is a face, not the post.
+ * The path says so, and the `efg` parameter, base64 JSON, spells it out.
+ */
+export function isProfilePicture(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (!META_CDN.test(parsed.hostname)) return false;
+  if (PROFILE_PATH.test(parsed.pathname)) return true;
+  const efg = parsed.searchParams.get("efg");
+  if (!efg) return false;
+  try {
+    return atob(efg.replace(/-/g, "+").replace(/_/g, "/")).includes("profile_pic");
+  } catch {
+    return false;
+  }
+}
+
 /** True for a Threads post or share link, the hosts the webview sniff owns. */
 export function isThreadsUrl(url: string): boolean {
   try {

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Downloaded media are named after their note.** A picture or video Oriko downloads is now saved as `<note name> <id>.jpg` rather than under a string of hex, so the attachment folder says which clipping each file belongs to. Files downloaded before keep their names and are still found. **Remove orphaned media** recognises note-named files by the device's download records rather than by their name.
 
+- **A video too large to keep leaves a still of itself.** A post whose video is over your size limit now gets a picture of that video as its tile and cover: the thumbnail its platform publishes (YouTube, Instagram), or on Threads a frame read straight off the video. Before, it fell back to the page's preview image, which on a Threads video post is the author's profile picture.
+- **Keep stills instead of videos.** Turn off **Settings → Downloads → Download videos** and a post keeps only a still of its video, fetched without downloading the video itself: a few hundred kilobytes and a second or two, instead of the whole file. Videos already downloaded stay.
+
 ## [0.1.64] - 2026-09-19
 
 ### Fixed

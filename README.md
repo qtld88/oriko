@@ -76,7 +76,7 @@ Any frontmatter property can become a filter. Enable properties under **Settings
 
 ## Downloads
 
-Remote media is copied into your attachment folder and named after the note it belongs to, `<note name> <id>.jpg`, so the folder tells you which clipping each file is for. The id comes from the media's URL, so the same asset shared by several clippings is stored once, and two pictures of one note never collide. Posters and thumbnails are generated for videos and GIFs, and downloads above a size cap are skipped.
+Remote media is copied into your attachment folder and named after the note it belongs to, `<note name> <id>.jpg`, so the folder tells you which clipping each file is for. The id comes from the media's URL, so the same asset shared by several clippings is stored once, and two pictures of one note never collide. Posters and thumbnails are generated for videos and GIFs, and downloads above a size cap are skipped. A post's video over that cap leaves a still of itself instead, and turning off **Download videos** keeps only that still for every post, without downloading the video.
 
 **Optional tools.** [yt-dlp](https://github.com/yt-dlp/yt-dlp) fetches the full video of a clipped post, and [ffmpeg](https://ffmpeg.org) renders previews for formats the app cannot play. Install them with your package manager: `brew install yt-dlp ffmpeg` on macOS, winget or scoop on Windows, apt on Linux. Oriko finds them on PATH and in common install locations, and **Settings → Downloads** takes an explicit path if yours is installed elsewhere.
 

@@ -60,6 +60,25 @@ export function sourceVideoPath(key: string, folder: string, extension: string, 
   return named ? `${folder}/${named} ${hash}.${extension}` : `${folder}/${hash}-video.${extension}`;
 }
 
+/** What a still can land as: a frame ffmpeg grabs, or a platform's thumbnail. */
+export const SOURCE_STILL_EXTENSIONS = ["jpg", "webp", "png"];
+
+/** Every path a source still for this key could live at, for the same reason. */
+export function sourceStillCandidates(key: string, folder: string, note = ""): string[] {
+  const hash = hashUrl(key);
+  const named = noteFilePrefix(note);
+  const legacy = SOURCE_STILL_EXTENSIONS.map((ext) => `${folder}/${hash}-still.${ext}`);
+  if (!named) return legacy;
+  return [...SOURCE_STILL_EXTENSIONS.map((ext) => `${folder}/${named} ${hash}.${ext}`), ...legacy];
+}
+
+/** Where a source still taken for this note lands. */
+export function sourceStillPath(key: string, folder: string, extension: string, note = ""): string {
+  const hash = hashUrl(key);
+  const named = noteFilePrefix(note);
+  return named ? `${folder}/${named} ${hash}.${extension}` : `${folder}/${hash}-still.${extension}`;
+}
+
 /** Statuses that hotlink protection returns and that a Referer may fix. */
 const RETRYABLE = new Set([401, 403, 429]);
 const UNSAFE_CHARS = /[^a-zA-Z0-9._-]/g;

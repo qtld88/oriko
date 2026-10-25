@@ -1,5 +1,12 @@
 import { App, Notice, Platform, TFile, normalizePath, requestUrl } from "obsidian";
-import { ArchiveDeps, archiveAll, sourceVideoCandidates, sourceVideoPath } from "./core/archive";
+import {
+  ArchiveDeps,
+  archiveAll,
+  sourceStillCandidates,
+  sourceStillPath,
+  sourceVideoCandidates,
+  sourceVideoPath,
+} from "./core/archive";
 import { MediaCache } from "./core/cache";
 import { readDimensions } from "./core/dimensions";
 import {
@@ -9,12 +16,19 @@ import {
   convertImageToPng,
   downloadSourceVideo,
   extractVideoFrame,
+  grabVideoStill,
+  sourceThumbnailUrl,
   ytdlpPath,
 } from "./convert";
 import { posterPath, previewPath, renderPoster, renderThumbnail, thumbPath } from "./core/derive";
 import { extensionOf, mimeForPath, needsPreview } from "./core/formats";
 import { ClippingIndex } from "./index-store";
-import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./core/normalize";
+import {
+  dedupeMedia,
+  normalizeUrl,
+  sourceStillKeyFor,
+  sourceVideoKeyFor,
+} from "./core/normalize";
 import { isThreadsUrl, noteNameFor, supportsSourceDownload } from "./core/resolve";
 import { sniffVideoUrl } from "./sniff";
 import type { CanonicalMedia } from "./core/normalize";
@@ -47,6 +61,11 @@ export class ArchiveService {
   cache = new MediaCache();
   private running = false;
   private listeners: Array<() => void> = [];
+  /**
+   * Video URLs the webview found, by post. A video too large to keep still
+   * yields a still, and finding its URL again means another page load.
+   */
+  private sniffedUrls = new Map<string, string>();
 
   constructor(
     private app: App,
@@ -254,9 +273,13 @@ export class ArchiveService {
     retryFailed = false,
     report: ProblemSink = this.announceNow
   ): Promise<void> {
+    // With videos off, a post that also has a picture keeps only that.
+    const skipVideos =
+      !this.settings().keepVideos && record.media.some((m) => m.kind === "image");
     const canonical = dedupeMedia(record.media).filter((m) => {
       // An embedded file in the vault is already archived by definition.
       if (!/^https?:\/\//i.test(m.url)) return false;
+      if (skipVideos && m.kind === "video") return false;
       const entry = this.cache.get(m.key);
       if (entry?.file) return false;
       return retryFailed || !entry?.failed;
@@ -302,7 +325,129 @@ export class ArchiveService {
     retryFailed: boolean,
     report: ProblemSink
   ): Promise<void> {
-    await this.downloadSourceVideoFor(record.source, retryFailed, record.title, report, noteNameOf(record));
+    await this.archivePostVideo(record.source, retryFailed, record.title, report, noteNameOf(record));
+  }
+
+  /**
+   * The post's own video, or a still of it in its place. The still is taken
+   * when the user keeps no videos, or when the video is over the size limit:
+   * either way the post is a video, and the picture the page publishes for
+   * it is no stand-in. On Threads that picture is the author's avatar.
+   */
+  async archivePostVideo(
+    source: string,
+    retryFailed: boolean,
+    title = "",
+    report: ProblemSink = this.announceNow,
+    note = ""
+  ): Promise<{ video: string | null; still: string | null }> {
+    const video = this.settings().keepVideos
+      ? await this.downloadSourceVideoFor(source, retryFailed, title, report, note)
+      : null;
+    if (video || !this.wantsStill(source)) return { video, still: null };
+    return { video: null, still: await this.downloadSourceStillFor(source, retryFailed, note) };
+  }
+
+  /**
+   * Only a video known to exist earns a still. A post that has none failed
+   * the video route already, and asking again for a frame of nothing would
+   * cost every picture post one more page load.
+   */
+  private wantsStill(source: string): boolean {
+    if (!source || !supportsSourceDownload(source)) return false;
+    if (!this.settings().keepVideos) return true;
+    const failed = this.cache.get(sourceVideoKeyFor(source))?.failed ?? "";
+    return failed.startsWith("too large");
+  }
+
+  /**
+   * Fetches a still of a post's video and returns its vault path. Threads
+   * gets a frame read straight off the sniffed video URL; every yt-dlp host
+   * gets the thumbnail its platform publishes. Neither downloads the video.
+   */
+  async downloadSourceStillFor(
+    source: string,
+    retryFailed: boolean,
+    note = ""
+  ): Promise<string | null> {
+    if (!source || !supportsSourceDownload(source)) return null;
+
+    const key = sourceStillKeyFor(source);
+    const existing = this.cache.get(key);
+    if (existing?.file) return existing.file;
+
+    // Adopted from another device first, as for videos: ffmpeg and yt-dlp
+    // are desktop tools, and the folder syncs.
+    const folder = normalizePath(this.settings().attachmentFolder);
+    for (const candidate of sourceStillCandidates(key, folder, note)) {
+      const path = normalizePath(candidate);
+      const file = this.app.vault.getFileByPath(path);
+      if (file) {
+        const size = readDimensions(await this.app.vault.readBinary(file));
+        this.cache.mergeOutcome({ key, kind: "image", file: path, ...(size ?? {}) });
+        return path;
+      }
+    }
+
+    if (existing?.failed && !retryFailed) return null;
+
+    const still = isThreadsUrl(source)
+      ? await this.threadsStill(source)
+      : await this.thumbnailStill(source);
+    if (!still.data) {
+      this.cache.mergeOutcome({ key, kind: "image", failed: still.failed });
+      return null;
+    }
+
+    await this.ensureFolder();
+    const path = normalizePath(sourceStillPath(key, folder, still.extension, note));
+    if (!this.app.vault.getFileByPath(path)) {
+      await this.app.vault.createBinary(path, still.data);
+    }
+    const size = readDimensions(still.data);
+    this.cache.mergeOutcome({
+      key,
+      kind: "image",
+      file: path,
+      bytes: still.data.byteLength,
+      ...(size ?? {}),
+    });
+    return path;
+  }
+
+  /** A frame of the Threads video, found by the webview and read by ffmpeg. */
+  private async threadsStill(
+    source: string
+  ): Promise<{ data: ArrayBuffer | null; extension: string; failed: string }> {
+    const none = (failed: string) => ({ data: null, extension: "", failed });
+    if (!Platform.isDesktopApp) return none("still needs the desktop app");
+    if (!conversionAvailable()) return none("ffmpeg not available");
+
+    const url = this.sniffedUrls.get(source) ?? (await sniffVideoUrl(source));
+    if (!url) return none("no video found on the page");
+    const data = await grabVideoStill(url);
+    return data ? { data, extension: "jpg", failed: "" } : none("ffmpeg could not read the video");
+  }
+
+  /** The platform's own thumbnail for the video, as yt-dlp names it. */
+  private async thumbnailStill(
+    source: string
+  ): Promise<{ data: ArrayBuffer | null; extension: string; failed: string }> {
+    const none = (failed: string) => ({ data: null, extension: "", failed });
+    if (!ytdlpPath()) return none("yt-dlp not available");
+
+    const url = await sourceThumbnailUrl(source);
+    if (!url) return none("yt-dlp found no thumbnail");
+    try {
+      const response = await requestUrl({ url, method: "GET", throw: false });
+      if (response.status < 200 || response.status >= 300) return none(`HTTP ${response.status}`);
+      const type = (response.headers?.["content-type"] ?? "").toLowerCase();
+      const extension = type.includes("webp") ? "webp" : type.includes("png") ? "png" : "jpg";
+      if (type && !type.startsWith("image/")) return none(`not an image (${type})`);
+      return { data: response.arrayBuffer, extension, failed: "" };
+    } catch (error) {
+      return none(String(error));
+    }
   }
 
   /**
@@ -419,6 +564,7 @@ export class ArchiveService {
       this.cache.mergeOutcome({ key, kind: "video", failed: "no video found on the page" });
       return null;
     }
+    this.sniffedUrls.set(source, url);
 
     try {
       const response = await requestUrl({ url, method: "GET", throw: false });
@@ -448,7 +594,7 @@ export class ArchiveService {
     onProgress?: (done: number, total: number) => void,
     onStage?: (label: string) => void,
     title = ""
-  ): Promise<{ byUrl: Map<string, string>; sourceVideo: string | null }> {
+  ): Promise<{ byUrl: Map<string, string>; sourceVideo: string | null; sourceStill: string | null }> {
     const byUrl = new Map<string, string>();
     const canonical: CanonicalMedia[] = media.map((m) => ({
       key: normalizeUrl(m.url),
@@ -476,9 +622,16 @@ export class ArchiveService {
     // video. fxtwitter hands back X's mp4 directly, and fetching it twice
     // would archive the same clip under two names.
     let sourceVideo: string | null = null;
+    let sourceStill: string | null = null;
     if (!haveVideo && supportsSourceDownload(source)) {
-      onStage?.("Fetching video…");
-      sourceVideo = await this.downloadSourceVideoFor(source, true, title, this.announceNow, note);
+      onStage?.(this.settings().keepVideos ? "Fetching video…" : "Fetching preview…");
+      ({ video: sourceVideo, still: sourceStill } = await this.archivePostVideo(
+        source,
+        true,
+        title,
+        this.announceNow,
+        note
+      ));
     }
 
     // Scoped to what was just archived: capture must never wait behind the
@@ -490,7 +643,7 @@ export class ArchiveService {
     await this.saveCache();
     this.emit();
 
-    return { byUrl, sourceVideo };
+    return { byUrl, sourceVideo, sourceStill };
   }
 
   /**

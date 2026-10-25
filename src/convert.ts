@@ -203,6 +203,56 @@ export async function extractVideoFrame(
   ]);
 }
 
+/**
+ * A JPEG still of a remote video, without downloading the video. ffmpeg
+ * reads an mp4 over HTTP with range requests, so a frame one second in costs
+ * the header and a few hundred kilobytes: measured on a 116 s Threads clip,
+ * 0.9 s and 113 KB against 8.9 MB for the file.
+ *
+ * One second in, because frame 0 is often black or a fade. A clip shorter
+ * than that has no frame there, so the start is tried next.
+ */
+export async function grabVideoStill(videoUrl: string): Promise<ArrayBuffer | null> {
+  const ffmpeg = ffmpegPath();
+  const fs = nodeRequire("fs") as FsModule | null;
+  const os = nodeRequire("os") as OsModule | null;
+  if (!ffmpeg || !fs || !os) return null;
+
+  let dir: string | null = null;
+  try {
+    dir = fs.mkdtempSync(`${os.tmpdir()}/oriko-`);
+    const target = `${dir}/still.jpg`;
+    const grab = (seek: string[]): Promise<boolean> =>
+      run(ffmpeg, [
+        "-y",
+        "-loglevel",
+        "error",
+        ...seek,
+        "-i",
+        videoUrl,
+        "-frames:v",
+        "1",
+        "-an",
+        "-q:v",
+        "2",
+        target,
+      ]);
+    if (!((await grab(["-ss", "1"])) && fs.existsSync(target)) && !(await grab([]))) return null;
+    if (!fs.existsSync(target)) return null;
+    const buffer = fs.readFileSync(target);
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  } catch {
+    return null;
+  } finally {
+    if (dir) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Temp directory cleanup is best effort.
+      }
+    }
+  }
+}
 
 export function ytdlpPath(): string | null {
   return toolPath("yt-dlp", toolOverrides.ytdlp);
@@ -340,4 +390,29 @@ export async function downloadSourceVideo(
       }
     }
   }
+}
+
+/**
+ * The thumbnail a post's own platform publishes for its video, as yt-dlp
+ * reports it without downloading anything: YouTube's maxres frame, the
+ * cover Instagram picks for a reel. A few seconds, against minutes for a
+ * large video.
+ */
+export async function sourceThumbnailUrl(pageUrl: string): Promise<string | null> {
+  const ytdlp = ytdlpPath();
+  if (!ytdlp) return null;
+  const run = await runCapturing(ytdlp, [
+    "--no-warnings",
+    "--no-playlist",
+    "--skip-download",
+    "--print",
+    "thumbnail",
+    pageUrl,
+  ]);
+  if (!run.ok) return null;
+  const line = run.stdout
+    .split("\n")
+    .map((part) => part.trim())
+    .find((part) => /^https?:\/\//i.test(part));
+  return line ?? null;
 }
