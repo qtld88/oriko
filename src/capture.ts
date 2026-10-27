@@ -304,8 +304,15 @@ export class CaptureService {
       localPath: archived.byUrl.get(item.url),
     }));
 
+    // Once the post's own video or a still of it is in hand, the avatar
+    // Threads names as the page's picture is dropped: it is a face, not the
+    // post, and the note would show it under the video.
+    if (archived.sourceVideo || archived.sourceStill) {
+      media = media.filter((item) => !isProfilePicture(item.url));
+    }
+
     // A video pulled from the post itself leads, so it becomes the cover and
-    // the first thing the note shows.
+    // the first thing the note shows. A still of it leads in its place.
     if (archived.sourceVideo) {
       media.unshift({
         url: link.url,
@@ -313,10 +320,6 @@ export class CaptureService {
         localPath: archived.sourceVideo,
       });
     } else if (archived.sourceStill) {
-      // A still of that video leads in its place, and becomes the cover. The
-      // avatar Threads names as the page's picture is dropped: it is a face,
-      // not the post.
-      media = media.filter((item) => !isProfilePicture(item.url));
       media.unshift({
         url: link.url,
         kind: "image" as const,
