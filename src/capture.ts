@@ -25,6 +25,7 @@ import {
   directMediaLink,
   fxApiUrl,
   isHttpUrl,
+  isThreadsUrl,
   noteNameFor,
   parseAmazonPage,
   parseFxTweet,
@@ -32,6 +33,7 @@ import {
   parsePageMeta,
   xStatus,
 } from "./core/resolve";
+import { showsOnlyAvatar } from "./core/threads-link";
 import type { ProgressState } from "./core/progress";
 import type { OrikoSettings } from "./core/settings";
 import { scanAvailable, scanPage } from "./page-scanner";
@@ -245,7 +247,7 @@ export class CaptureService {
     }
 
     this.report(0.1, "Reading link…");
-    const link = await this.resolve(url);
+    const link = await this.withAuthorLink(await this.resolve(url));
 
     if (!link || link.media.length === 0) {
       // A page that offers no media at all is still worth keeping: scan it
@@ -311,6 +313,19 @@ export class CaptureService {
     // grid was never told the clipping had landed.
     await this.index.handleModify(file);
     this.finished(link.title.slice(0, 40), file.path, sorted.outcome, sorted.verdict.category);
+  }
+
+  /**
+   * A Threads post that has no picture of its own shows its author's avatar,
+   * and when its point is a link in the author's first reply, that link's
+   * preview image is the better cover. Left as it came for any other page,
+   * for a post with a picture, and when no such link is found.
+   */
+  private async withAuthorLink(link: ResolvedLink | null): Promise<ResolvedLink | null> {
+    if (!link || !isThreadsUrl(link.url) || !showsOnlyAvatar(link.media)) return link;
+    this.report(0.2, "Looking for the author's link…");
+    const image = await this.archiver.authorLinkImage(link.url);
+    return image ? { ...link, media: [{ url: image, kind: "image" }] } : link;
   }
 
   private async resolve(url: string): Promise<ResolvedLink | null> {

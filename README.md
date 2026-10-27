@@ -36,7 +36,7 @@ Paste a link anywhere on the wall, or run **Clip from clipboard** from the comma
 | An article or product page | The page's own preview image, title, author and date |
 | A direct image or video URL | The file itself, saved as its own clipping |
 | An X or Instagram post | The post's media, via optional community resolvers |
-| A Threads post | The video, found by loading the post itself (desktop) |
+| A Threads post | The video, found by loading the post itself (desktop). A post with no picture of its own is covered by the preview image of the link in its author's first reply, rather than by the author's avatar |
 | Notes from the [Obsidian Web Clipper](https://obsidian.md/clipper) | They appear on the wall, and their remote media is downloaded in the background |
 | A page whose media cannot be scraped | The page itself is scanned as a fallback, so the clipping still gets a picture |
 

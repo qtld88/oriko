@@ -18,6 +18,7 @@ import { hashUrl } from "./core/hash";
 import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./core/normalize";
 import { isThreadsUrl, supportsSourceDownload } from "./core/resolve";
 import { sniffVideoUrl } from "./sniff";
+import { findAuthorLink } from "./threads-link";
 import type { CanonicalMedia } from "./core/normalize";
 import { extractPageImage, knownHostThumbnail, needsPageCover } from "./core/page-cover";
 import type { ClippingRecord } from "./core/scan";
@@ -579,6 +580,27 @@ export class ArchiveService {
     }
     const imageUrl = await this.fetchPageImage(source);
     return imageUrl ? this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source) : null;
+  }
+
+  /**
+   * The preview image of the link a Threads post is for: the one in the
+   * author's first reply, when the post has none of its own. Null for any
+   * other page, on a device that cannot load one, and for a post with no such
+   * link, which keeps the picture it has.
+   */
+  async authorLinkImage(source: string): Promise<string | null> {
+    if (!isThreadsUrl(source) || !Platform.isDesktopApp) return null;
+    const link = await findAuthorLink(source);
+    if (!link) return null;
+    // The card's own picture first: it is what the page declared, already
+    // read by Threads, so no request goes to a site that may refuse one.
+    return link.image ?? (await this.fetchPageImage(link.url));
+  }
+
+  /** Downloads what authorLinkImage finds, kept under the image's own key. */
+  async archiveAuthorLinkPicture(source: string, alt = ""): Promise<string | null> {
+    const image = await this.authorLinkImage(source);
+    return image ? this.archivePicture(image, source, alt) : null;
   }
 
   private async archiveOne(media: CanonicalMedia, source: string): Promise<string | null> {

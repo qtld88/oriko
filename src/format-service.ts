@@ -4,10 +4,11 @@ import { appendedBody, isEmptyPlan, planConformance } from "./core/conform";
 import type { ConformPlan } from "./core/conform";
 import type { HistoryEntry } from "./core/history";
 import type { ProgressState } from "./core/progress";
-import { clippingPathFor } from "./core/resolve";
+import { clippingPathFor, isThreadsUrl } from "./core/resolve";
 import { splitFrontmatter } from "./core/scan";
 import type { OrikoSettings } from "./core/settings";
 import { fileableGrid } from "./core/spaces";
+import { isThreadsAvatar } from "./core/threads-link";
 import { isInFolder } from "./index-store";
 import type { ClippingIndex } from "./index-store";
 
@@ -196,6 +197,15 @@ export class FormatService {
   ): Promise<{ path: string; fromPage: boolean } | null> {
     const picture = plan.picture;
     if (picture.kind === "none") return null;
+    // A Threads post that points to a link in its author's first reply is
+    // about that link, and its own picture is only the author's avatar.
+    const avatarOnly =
+      picture.kind === "page" ||
+      (picture.kind === "body" && picture.remote && isThreadsAvatar(picture.url));
+    if (avatarOnly && isThreadsUrl(source)) {
+      const linked = await this.archiver.archiveAuthorLinkPicture(source, title);
+      if (linked) return { path: linked, fromPage: true };
+    }
     if (picture.kind === "body") {
       const path = picture.remote
         ? await this.archiver.archivePicture(picture.url, source, title)
