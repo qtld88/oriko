@@ -1,5 +1,12 @@
 import { App, Notice, Platform, TFile, normalizePath, requestUrl } from "obsidian";
-import { ArchiveDeps, archiveAll, sourceVideoCandidates } from "./core/archive";
+import {
+  ArchiveDeps,
+  archiveAll,
+  sourceStillCandidates,
+  sourceStillPath,
+  sourceVideoCandidates,
+  sourceVideoPath,
+} from "./core/archive";
 import { MediaCache } from "./core/cache";
 import { readDimensions } from "./core/dimensions";
 import {
@@ -9,14 +16,20 @@ import {
   convertImageToPng,
   downloadSourceVideo,
   extractVideoFrame,
+  grabVideoStill,
+  sourceThumbnailUrl,
   ytdlpPath,
 } from "./convert";
 import { posterPath, previewPath, renderPoster, renderThumbnail, thumbPath } from "./core/derive";
 import { extensionOf, mimeForPath, needsPreview } from "./core/formats";
 import { ClippingIndex } from "./index-store";
-import { hashUrl } from "./core/hash";
-import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./core/normalize";
-import { isThreadsUrl, supportsSourceDownload } from "./core/resolve";
+import {
+  dedupeMedia,
+  normalizeUrl,
+  sourceStillKeyFor,
+  sourceVideoKeyFor,
+} from "./core/normalize";
+import { isThreadsUrl, noteNameFor, supportsSourceDownload } from "./core/resolve";
 import { sniffVideoUrl } from "./sniff";
 import { findAuthorLink } from "./threads-link";
 import type { CanonicalMedia } from "./core/normalize";
@@ -34,6 +47,12 @@ const PROBLEM_NOTICE_MS = 10000;
 /** Where a video problem goes: straight to a toast, or into a pass's pile. */
 type ProblemSink = (problem: VideoProblem) => void;
 
+/** The name of the note a record lives in, which its media are named after. */
+function noteNameOf(record: ClippingRecord): string {
+  const name = record.path.slice(record.path.lastIndexOf("/") + 1);
+  return name.replace(/\.md$/i, "");
+}
+
 export interface ArchiveSummary {
   ok: number;
   failed: number;
@@ -43,6 +62,11 @@ export class ArchiveService {
   cache = new MediaCache();
   private running = false;
   private listeners: Array<() => void> = [];
+  /**
+   * Video URLs the webview found, by post. A video too large to keep still
+   * yields a still, and finding its URL again means another page load.
+   */
+  private sniffedUrls = new Map<string, string>();
 
   constructor(
     private app: App,
@@ -72,6 +96,11 @@ export class ArchiveService {
     for (const cb of this.listeners) cb();
   }
 
+  /** For a change made to the cache from outside, such as renamed files. */
+  notifyChanged(): void {
+    this.emit();
+  }
+
   private cachePath(): string {
     return normalizePath(`${this.cacheDir}/${CACHE_FILE}`);
   }
@@ -97,8 +126,9 @@ export class ArchiveService {
     }
   }
 
-  private deps(): ArchiveDeps {
+  private deps(note = ""): ArchiveDeps {
     return {
+      note,
       fetch: async (url, headers) => {
         const response = await requestUrl({ url, method: "GET", headers, throw: false });
         return {
@@ -244,9 +274,13 @@ export class ArchiveService {
     retryFailed = false,
     report: ProblemSink = this.announceNow
   ): Promise<void> {
+    // With videos off, a post that also has a picture keeps only that.
+    const skipVideos =
+      !this.settings().keepVideos && record.media.some((m) => m.kind === "image");
     const canonical = dedupeMedia(record.media).filter((m) => {
       // An embedded file in the vault is already archived by definition.
       if (!/^https?:\/\//i.test(m.url)) return false;
+      if (skipVideos && m.kind === "video") return false;
       const entry = this.cache.get(m.key);
       if (entry?.file) return false;
       return retryFailed || !entry?.failed;
@@ -265,7 +299,7 @@ export class ArchiveService {
     }
 
     await this.ensureFolder();
-    const outcomes = await archiveAll(canonical, record.source, this.deps(), 4, (done, total) =>
+    const outcomes = await archiveAll(canonical, record.source, this.deps(noteNameOf(record)), 4, (done, total) =>
       this.onRecordProgress?.(done, total)
     );
     for (const outcome of outcomes) this.cache.mergeOutcome(outcome);
@@ -292,7 +326,129 @@ export class ArchiveService {
     retryFailed: boolean,
     report: ProblemSink
   ): Promise<void> {
-    await this.downloadSourceVideoFor(record.source, retryFailed, record.title, report);
+    await this.archivePostVideo(record.source, retryFailed, record.title, report, noteNameOf(record));
+  }
+
+  /**
+   * The post's own video, or a still of it in its place. The still is taken
+   * when the user keeps no videos, or when the video is over the size limit:
+   * either way the post is a video, and the picture the page publishes for
+   * it is no stand-in. On Threads that picture is the author's avatar.
+   */
+  async archivePostVideo(
+    source: string,
+    retryFailed: boolean,
+    title = "",
+    report: ProblemSink = this.announceNow,
+    note = ""
+  ): Promise<{ video: string | null; still: string | null }> {
+    const video = this.settings().keepVideos
+      ? await this.downloadSourceVideoFor(source, retryFailed, title, report, note)
+      : null;
+    if (video || !this.wantsStill(source)) return { video, still: null };
+    return { video: null, still: await this.downloadSourceStillFor(source, retryFailed, note) };
+  }
+
+  /**
+   * Only a video known to exist earns a still. A post that has none failed
+   * the video route already, and asking again for a frame of nothing would
+   * cost every picture post one more page load.
+   */
+  private wantsStill(source: string): boolean {
+    if (!source || !supportsSourceDownload(source)) return false;
+    if (!this.settings().keepVideos) return true;
+    const failed = this.cache.get(sourceVideoKeyFor(source))?.failed ?? "";
+    return failed.startsWith("too large");
+  }
+
+  /**
+   * Fetches a still of a post's video and returns its vault path. Threads
+   * gets a frame read straight off the sniffed video URL; every yt-dlp host
+   * gets the thumbnail its platform publishes. Neither downloads the video.
+   */
+  async downloadSourceStillFor(
+    source: string,
+    retryFailed: boolean,
+    note = ""
+  ): Promise<string | null> {
+    if (!source || !supportsSourceDownload(source)) return null;
+
+    const key = sourceStillKeyFor(source);
+    const existing = this.cache.get(key);
+    if (existing?.file) return existing.file;
+
+    // Adopted from another device first, as for videos: ffmpeg and yt-dlp
+    // are desktop tools, and the folder syncs.
+    const folder = normalizePath(this.settings().attachmentFolder);
+    for (const candidate of sourceStillCandidates(key, folder, note)) {
+      const path = normalizePath(candidate);
+      const file = this.app.vault.getFileByPath(path);
+      if (file) {
+        const size = readDimensions(await this.app.vault.readBinary(file));
+        this.cache.mergeOutcome({ key, kind: "image", file: path, ...(size ?? {}) });
+        return path;
+      }
+    }
+
+    if (existing?.failed && !retryFailed) return null;
+
+    const still = isThreadsUrl(source)
+      ? await this.threadsStill(source)
+      : await this.thumbnailStill(source);
+    if (!still.data) {
+      this.cache.mergeOutcome({ key, kind: "image", failed: still.failed });
+      return null;
+    }
+
+    await this.ensureFolder();
+    const path = normalizePath(sourceStillPath(key, folder, still.extension, note));
+    if (!this.app.vault.getFileByPath(path)) {
+      await this.app.vault.createBinary(path, still.data);
+    }
+    const size = readDimensions(still.data);
+    this.cache.mergeOutcome({
+      key,
+      kind: "image",
+      file: path,
+      bytes: still.data.byteLength,
+      ...(size ?? {}),
+    });
+    return path;
+  }
+
+  /** A frame of the Threads video, found by the webview and read by ffmpeg. */
+  private async threadsStill(
+    source: string
+  ): Promise<{ data: ArrayBuffer | null; extension: string; failed: string }> {
+    const none = (failed: string) => ({ data: null, extension: "", failed });
+    if (!Platform.isDesktopApp) return none("still needs the desktop app");
+    if (!conversionAvailable()) return none("ffmpeg not available");
+
+    const url = this.sniffedUrls.get(source) ?? (await sniffVideoUrl(source));
+    if (!url) return none("no video found on the page");
+    const data = await grabVideoStill(url);
+    return data ? { data, extension: "jpg", failed: "" } : none("ffmpeg could not read the video");
+  }
+
+  /** The platform's own thumbnail for the video, as yt-dlp names it. */
+  private async thumbnailStill(
+    source: string
+  ): Promise<{ data: ArrayBuffer | null; extension: string; failed: string }> {
+    const none = (failed: string) => ({ data: null, extension: "", failed });
+    if (!ytdlpPath()) return none("yt-dlp not available");
+
+    const url = await sourceThumbnailUrl(source);
+    if (!url) return none("yt-dlp found no thumbnail");
+    try {
+      const response = await requestUrl({ url, method: "GET", throw: false });
+      if (response.status < 200 || response.status >= 300) return none(`HTTP ${response.status}`);
+      const type = (response.headers?.["content-type"] ?? "").toLowerCase();
+      const extension = type.includes("webp") ? "webp" : type.includes("png") ? "png" : "jpg";
+      if (type && !type.startsWith("image/")) return none(`not an image (${type})`);
+      return { data: response.arrayBuffer, extension, failed: "" };
+    } catch (error) {
+      return none(String(error));
+    }
   }
 
   /**
@@ -304,7 +460,8 @@ export class ArchiveService {
     source: string,
     retryFailed: boolean,
     title = "",
-    report: ProblemSink = this.announceNow
+    report: ProblemSink = this.announceNow,
+    note = ""
   ): Promise<string | null> {
     if (!source || !supportsSourceDownload(source)) return null;
 
@@ -317,7 +474,7 @@ export class ArchiveService {
     // Checked before any recorded failure is believed, because "yt-dlp not
     // available" was a fact about this device, not about the post.
     const folder = normalizePath(this.settings().attachmentFolder);
-    for (const candidate of sourceVideoCandidates(key, folder)) {
+    for (const candidate of sourceVideoCandidates(key, folder, note)) {
       const path = normalizePath(candidate);
       if (this.app.vault.getFileByPath(path)) {
         this.cache.mergeOutcome({ key, kind: "video", file: path });
@@ -335,18 +492,15 @@ export class ArchiveService {
       : await this.ytdlpVideo(source, key, (kind) => report({ kind, source, title }));
     if (!result) return null;
 
-    if (result.data.byteLength > this.settings().maxBytes) {
-      this.cache.mergeOutcome({
-        key,
-        kind: "video",
-        failed: `too large (${result.data.byteLength} bytes)`,
-      });
-      report({ kind: "too-large", source, title, bytes: result.data.byteLength });
+    const bytes = "tooLarge" in result ? result.tooLarge : result.data.byteLength;
+    if ("tooLarge" in result || bytes > this.settings().maxBytes) {
+      this.cache.mergeOutcome({ key, kind: "video", failed: `too large (${bytes} bytes)` });
+      report({ kind: "too-large", source, title, bytes });
       return null;
     }
 
     await this.ensureFolder();
-    const path = normalizePath(`${folder}/${hashUrl(key)}-video.${result.extension}`);
+    const path = normalizePath(sourceVideoPath(key, folder, result.extension, note));
 
     if (!this.app.vault.getFileByPath(path)) {
       await this.app.vault.createBinary(path, result.data);
@@ -366,7 +520,7 @@ export class ArchiveService {
     source: string,
     key: string,
     onProblem: (kind: "refused" | "timed-out") => void
-  ): Promise<{ data: ArrayBuffer; extension: string } | null> {
+  ): Promise<{ data: ArrayBuffer; extension: string } | { tooLarge: number } | null> {
     if (!conversionAvailable() || !ytdlpPath()) {
       // Recorded rather than skipped silently, so a missing tool is
       // diagnosable from the cache instead of looking like nothing happened.
@@ -374,7 +528,8 @@ export class ArchiveService {
       return null;
     }
 
-    const result = await downloadSourceVideo(source);
+    const result = await downloadSourceVideo(source, this.settings().maxBytes);
+    if (!result.ok && result.tooLarge !== undefined) return { tooLarge: result.tooLarge };
     if (!result.ok) {
       // Only a refusal or a timeout is announced. A post with no video in it
       // fails the same way every time and has nothing to tell the user.
@@ -410,6 +565,7 @@ export class ArchiveService {
       this.cache.mergeOutcome({ key, kind: "video", failed: "no video found on the page" });
       return null;
     }
+    this.sniffedUrls.set(source, url);
 
     try {
       const response = await requestUrl({ url, method: "GET", throw: false });
@@ -439,7 +595,7 @@ export class ArchiveService {
     onProgress?: (done: number, total: number) => void,
     onStage?: (label: string) => void,
     title = ""
-  ): Promise<{ byUrl: Map<string, string>; sourceVideo: string | null }> {
+  ): Promise<{ byUrl: Map<string, string>; sourceVideo: string | null; sourceStill: string | null }> {
     const byUrl = new Map<string, string>();
     const canonical: CanonicalMedia[] = media.map((m) => ({
       key: normalizeUrl(m.url),
@@ -447,12 +603,14 @@ export class ArchiveService {
       kind: m.kind,
       alt: "",
     }));
+    // The note is written after its media, under the name capture gives it.
+    const note = noteNameFor(title, source);
 
     let haveVideo = false;
 
     if (canonical.length > 0) {
       await this.ensureFolder();
-      const outcomes = await archiveAll(canonical, source, this.deps(), 4, onProgress);
+      const outcomes = await archiveAll(canonical, source, this.deps(note), 4, onProgress);
       outcomes.forEach((outcome, index) => {
         this.cache.mergeOutcome(outcome);
         if (!outcome.file) return;
@@ -465,9 +623,16 @@ export class ArchiveService {
     // video. fxtwitter hands back X's mp4 directly, and fetching it twice
     // would archive the same clip under two names.
     let sourceVideo: string | null = null;
+    let sourceStill: string | null = null;
     if (!haveVideo && supportsSourceDownload(source)) {
-      onStage?.("Fetching video…");
-      sourceVideo = await this.downloadSourceVideoFor(source, true, title);
+      onStage?.(this.settings().keepVideos ? "Fetching video…" : "Fetching preview…");
+      ({ video: sourceVideo, still: sourceStill } = await this.archivePostVideo(
+        source,
+        true,
+        title,
+        this.announceNow,
+        note
+      ));
     }
 
     // Scoped to what was just archived: capture must never wait behind the
@@ -479,7 +644,7 @@ export class ArchiveService {
     await this.saveCache();
     this.emit();
 
-    return { byUrl, sourceVideo };
+    return { byUrl, sourceVideo, sourceStill };
   }
 
   /**
@@ -554,17 +719,17 @@ export class ArchiveService {
     }
 
     await this.ensureFolder();
-    const [outcome] = await archiveAll([candidate], record.source, this.deps(), 1);
+    const [outcome] = await archiveAll([candidate], record.source, this.deps(noteNameOf(record)), 1);
     if (outcome) this.cache.mergeOutcome(outcome);
   }
 
   /**
    * Downloads one picture for a note being formatted and returns its vault
    * path, or null. Keyed like every other archived asset, so a picture
-   * already on disk is not fetched a second time.
+   * already on disk is not fetched a second time. `note` names the file.
    */
-  async archivePicture(url: string, source: string, alt = ""): Promise<string | null> {
-    return this.archiveOne({ key: normalizeUrl(url), url, kind: "image", alt }, source);
+  async archivePicture(url: string, source: string, alt = "", note = ""): Promise<string | null> {
+    return this.archiveOne({ key: normalizeUrl(url), url, kind: "image", alt }, source, note);
   }
 
   /**
@@ -572,14 +737,14 @@ export class ArchiveService {
    * resolvePageCover finds it and kept under the same key, so the tile and
    * the note agree on which file it is.
    */
-  async archivePagePicture(source: string, alt = ""): Promise<string | null> {
+  async archivePagePicture(source: string, alt = "", note = ""): Promise<string | null> {
     const key = normalizeUrl(source);
     const known = knownHostThumbnail(source);
     if (known) {
-      return this.archiveOne({ key, url: known.url, kind: "image", alt, fallbacks: known.fallbacks }, source);
+      return this.archiveOne({ key, url: known.url, kind: "image", alt, fallbacks: known.fallbacks }, source, note);
     }
     const imageUrl = await this.fetchPageImage(source);
-    return imageUrl ? this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source) : null;
+    return imageUrl ? this.archiveOne({ key, url: imageUrl, kind: "image", alt }, source, note) : null;
   }
 
   /**
@@ -598,16 +763,16 @@ export class ArchiveService {
   }
 
   /** Downloads what authorLinkImage finds, kept under the image's own key. */
-  async archiveAuthorLinkPicture(source: string, alt = ""): Promise<string | null> {
+  async archiveAuthorLinkPicture(source: string, alt = "", note = ""): Promise<string | null> {
     const image = await this.authorLinkImage(source);
-    return image ? this.archivePicture(image, source, alt) : null;
+    return image ? this.archivePicture(image, source, alt, note) : null;
   }
 
-  private async archiveOne(media: CanonicalMedia, source: string): Promise<string | null> {
+  private async archiveOne(media: CanonicalMedia, source: string, note = ""): Promise<string | null> {
     const held = this.cache.get(media.key)?.file;
     if (held && this.app.vault.getFileByPath(normalizePath(held))) return held;
     await this.ensureFolder();
-    const [outcome] = await archiveAll([media], source, this.deps(), 1);
+    const [outcome] = await archiveAll([media], source, this.deps(note), 1);
     if (!outcome) return null;
     this.cache.mergeOutcome(outcome);
     return outcome.file ?? null;

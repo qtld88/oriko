@@ -131,6 +131,14 @@ export function sourceVideoKeyFor(source: string): string {
 }
 
 /**
+ * Cache key for a still of that same video, kept in its place when the video
+ * is too large to keep or the user chose not to keep videos at all.
+ */
+export function sourceStillKeyFor(source: string): string {
+  return `still:${normalizeUrl(source)}`;
+}
+
+/**
  * Local file that stands in for a remote URL, or null when there is none.
  * Kept here beside the key logic so it stays free of Obsidian imports and
  * can be tested directly.

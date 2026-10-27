@@ -18,6 +18,10 @@ export interface ResolvedLink {
   author: string;
   published: string;
   media: ResolvedMedia[];
+  /** The full text for the note body, when longer than `description`. */
+  body?: string;
+  /** Markdown transcript, written under its own heading at the end. */
+  transcript?: string;
 }
 
 /** Parameters that identify the sharer, not the content. */
@@ -204,6 +208,35 @@ export function supportsSourceDownload(url: string): boolean {
   try {
     const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
     return DOWNLOADABLE_HOSTS.has(host);
+  } catch {
+    return false;
+  }
+}
+
+const META_CDN = /(^|\.)(cdninstagram\.com|fbcdn\.net)$/i;
+/** Meta files a profile picture under `t51.<n>-19`; a post's own media is `-15`. */
+const PROFILE_PATH = /\/t51\.\d+-19\//;
+
+/**
+ * Whether a URL is someone's profile picture on Meta's CDN.
+ *
+ * Threads names the author's avatar as og:image on every post whose media is
+ * a video, so taken at its word the page's picture is a face, not the post.
+ * The path says so, and the `efg` parameter, base64 JSON, spells it out.
+ */
+export function isProfilePicture(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (!META_CDN.test(parsed.hostname)) return false;
+  if (PROFILE_PATH.test(parsed.pathname)) return true;
+  const efg = parsed.searchParams.get("efg");
+  if (!efg) return false;
+  try {
+    return atob(efg.replace(/-/g, "+").replace(/_/g, "/")).includes("profile_pic");
   } catch {
     return false;
   }
@@ -587,7 +620,8 @@ export function buildNote(
   if (grid) lines.push(`grid: ${yamlString(grid)}`);
   lines.push("---", "");
 
-  if (link.description) lines.push(link.description, "");
+  const body = link.body || link.description;
+  if (body) lines.push(body, "");
 
   for (const item of link.media) {
     // Prefer the archived file: an embed of a local path keeps playing after
@@ -602,6 +636,7 @@ export function buildNote(
   }
 
   lines.push(`[${link.url}](${link.url})`, "");
+  if (link.transcript) lines.push("## Transcript", "", link.transcript, "");
   return lines.join("\n");
 }
 

@@ -25,6 +25,7 @@ import {
   directMediaLink,
   fxApiUrl,
   isHttpUrl,
+  isProfilePicture,
   isThreadsUrl,
   noteNameFor,
   parseAmazonPage,
@@ -37,6 +38,15 @@ import { showsOnlyAvatar } from "./core/threads-link";
 import type { ProgressState } from "./core/progress";
 import type { OrikoSettings } from "./core/settings";
 import { scanAvailable, scanPage } from "./page-scanner";
+import { youtubeVideoId } from "./core/page-cover";
+import {
+  YOUTUBE_PLAYER_URL,
+  parseCaptions,
+  parsePlayerResponse,
+  transcriptMarkdown,
+  youtubePlayerBody,
+} from "./core/youtube";
+import type { YouTubeDetails } from "./core/youtube";
 
 /**
  * Identifies the plugin honestly rather than impersonating a known crawler.
@@ -274,9 +284,15 @@ export class CaptureService {
     const sorting = this.classifier
       .classify(clippingState(link.title, link.description, link.url))
       .catch(() => ({ verdict: NO_VERDICT, outcome: "unavailable" as SortOutcome }));
+    // With videos off, a video the page names outright gives way to the
+    // picture beside it. A video that is all there is, as when a video
+    // address is pasted, is kept: that paste asked for it.
+    const pictures = link.media.filter((item) => item.kind === "image");
+    const wanted =
+      !this.settings().keepVideos && pictures.length > 0 ? pictures : link.media;
     const archived = await this.archiver.archiveResolved(
       link.url,
-      link.media,
+      wanted,
       (done, total) =>
         this.report(0.3 + (done / Math.max(1, total)) * 0.5, `Downloading ${done}/${total}…`),
       // The work after the downloads announces itself, so the bar can never
@@ -285,18 +301,31 @@ export class CaptureService {
       link.title
     );
 
-    const media = link.media.map((item) => ({
+    let media = wanted.map((item) => ({
       ...item,
       localPath: archived.byUrl.get(item.url),
     }));
 
+    // Once the post's own video or a still of it is in hand, the avatar
+    // Threads names as the page's picture is dropped: it is a face, not the
+    // post, and the note would show it under the video.
+    if (archived.sourceVideo || archived.sourceStill) {
+      media = media.filter((item) => !isProfilePicture(item.url));
+    }
+
     // A video pulled from the post itself leads, so it becomes the cover and
-    // the first thing the note shows.
+    // the first thing the note shows. A still of it leads in its place.
     if (archived.sourceVideo) {
       media.unshift({
         url: link.url,
         kind: "video" as const,
         localPath: archived.sourceVideo,
+      });
+    } else if (archived.sourceStill) {
+      media.unshift({
+        url: link.url,
+        kind: "image" as const,
+        localPath: archived.sourceStill,
       });
     }
 
@@ -343,6 +372,9 @@ export class CaptureService {
 
     const insta = instagramPost(url);
     if (insta) return this.resolveInstagram(insta, url);
+
+    const video = youtubeVideoId(url);
+    if (video) return this.resolveYouTube(video, url);
 
     if (amazonProduct(url)) {
       const product = await this.resolveAmazon(url);
@@ -395,6 +427,53 @@ export class CaptureService {
     // by a local yt-dlp, keyed off the source URL, so nothing here needs a
     // third-party mirror.
     return base;
+  }
+
+  /**
+   * The page still supplies the cover and the video; the player endpoint
+   * adds what its tags cut short. Either half failing leaves the other.
+   */
+  private async resolveYouTube(videoId: string, url: string): Promise<ResolvedLink | null> {
+    const [page, details] = await Promise.all([
+      this.resolvePage(url),
+      this.youtubeDetails(videoId),
+    ]);
+    if (!page || !details) return page;
+
+    const transcript = details.captionUrl ? await this.youtubeTranscript(details.captionUrl) : "";
+    return {
+      ...page,
+      title: page.title || details.title,
+      author: page.author || details.author,
+      body: details.description,
+      transcript,
+    };
+  }
+
+  private async youtubeDetails(videoId: string): Promise<YouTubeDetails | null> {
+    try {
+      const response = await requestUrl({
+        url: YOUTUBE_PLAYER_URL,
+        method: "POST",
+        contentType: "application/json",
+        body: youtubePlayerBody(videoId),
+        throw: false,
+      });
+      if (response.status < 200 || response.status >= 300) return null;
+      return parsePlayerResponse(response.json);
+    } catch {
+      return null;
+    }
+  }
+
+  private async youtubeTranscript(captionUrl: string): Promise<string> {
+    try {
+      const response = await requestUrl({ url: captionUrl, method: "GET", throw: false });
+      if (response.status < 200 || response.status >= 300) return "";
+      return transcriptMarkdown(parseCaptions(response.text));
+    } catch {
+      return "";
+    }
   }
 
   private async resolveX(

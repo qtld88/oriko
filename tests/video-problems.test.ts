@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { describeVideoProblems, ytdlpProblem } from "../src/core/video-problems";
 import type { VideoProblem } from "../src/core/video-problems";
 
-const limits = { maxBytes: 50 * 1048576, timeoutMs: 180000 };
+const limits = { maxBytes: 50 * 1048576, timeoutMs: 60000 };
 
 describe("ytdlpProblem", () => {
   it("reads a 403 as the site refusing the download", () => {
@@ -77,7 +77,7 @@ describe("describeVideoProblems", () => {
       limits
     );
     expect(message).toContain('"Lesson"');
-    expect(message).toContain("3 minutes");
+    expect(message).toContain("1 minute");
   });
 
   it("folds several problems of one kind into a single message", () => {

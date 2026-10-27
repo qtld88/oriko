@@ -1,6 +1,6 @@
 import type { MediaCache } from "./cache";
 import { extensionOf, isRenderable } from "./formats";
-import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./normalize";
+import { dedupeMedia, normalizeUrl, sourceStillKeyFor, sourceVideoKeyFor } from "./normalize";
 import type { CanonicalMedia } from "./normalize";
 import { knownHostThumbnail } from "./page-cover";
 import type { ClippingRecord } from "./scan";
@@ -164,6 +164,13 @@ function pickCover(record: ClippingRecord, cache: MediaCache): Cover | null {
     const fromSource = cache.get(sourceVideoKeyFor(record.source));
     if (fromSource?.file) {
       const cover = localCover(fromSource);
+      if (cover) return cover;
+    }
+    // A still of that video, kept in its place, outranks the page's picture
+    // too: on Threads that picture is the author's avatar.
+    const still = cache.get(sourceStillKeyFor(record.source));
+    if (still?.file) {
+      const cover = localCover(still);
       if (cover) return cover;
     }
   }

@@ -7,6 +7,8 @@
  * filters lives here, where it tests.
  */
 
+import { isProfilePicture } from "./resolve";
+
 /** One thing the loaded page shows, in the order it shows it. */
 export type ThreadsItem =
   /** A post's header: the permalink to a post, with its author. */
@@ -70,22 +72,13 @@ export function cardImageUrl(src: string): string | null {
 }
 
 /**
- * Whether an Instagram CDN address is a profile picture. Their paths end the
- * asset type in `-19` (`t51.2885-19`, `t51.82787-19`), where a post's own
- * image says `-15`. A Threads post that shows no picture of its own falls
- * back to its author's, which is the cover this exists to replace.
- */
-export function isThreadsAvatar(url: string): boolean {
-  return /\/t51\.\d+-19\//.test(url);
-}
-
-/**
  * Whether a post's resolved media is nothing but profile pictures, or
- * nothing at all. Only then is the link in its author's reply worth looking
- * for: a post with a picture or a video of its own is covered by that.
+ * nothing at all. A Threads post that shows no picture of its own falls back
+ * to its author's, which is the cover this exists to replace; only then is
+ * the link in the author's reply worth looking for.
  */
 export function showsOnlyAvatar(media: Array<{ url: string; kind: "image" | "video" }>): boolean {
-  return media.every((item) => item.kind === "image" && isThreadsAvatar(item.url));
+  return media.every((item) => item.kind === "image" && isProfilePicture(item.url));
 }
 
 interface Block {

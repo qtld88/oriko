@@ -1,6 +1,6 @@
 import type { CacheEntry } from "./cache";
 import { extensionOf, isRenderable } from "./formats";
-import { dedupeMedia, normalizeUrl, sourceVideoKeyFor } from "./normalize";
+import { dedupeMedia, normalizeUrl, sourceStillKeyFor, sourceVideoKeyFor } from "./normalize";
 import type { ClippingRecord } from "./scan";
 
 /**
@@ -77,10 +77,14 @@ export function liveRefs(
   for (const record of records) {
     if (record.source) {
       const videoKey = sourceVideoKeyFor(record.source);
+      const stillKey = sourceStillKeyFor(record.source);
       keys.add(videoKey);
+      keys.add(stillKey);
       // The page's own preview image, needed only while nothing better has
       // been archived for the same post.
-      if (!videoCovers(byKey.get(videoKey))) keys.add(normalizeUrl(record.source));
+      if (!videoCovers(byKey.get(videoKey)) && !byKey.get(stillKey)?.file) {
+        keys.add(normalizeUrl(record.source));
+      }
     }
 
     // Deduped through the same path the archiver used, so the keys match.
@@ -145,6 +149,9 @@ export function savableFiles(
 ): string[] {
   const video = record.source ? cache.get(sourceVideoKeyFor(record.source)) : undefined;
   if (video?.file) return [video.file];
+  // A still kept in the video's place is the same post's media, one hat down.
+  const still = record.source ? cache.get(sourceStillKeyFor(record.source)) : undefined;
+  if (still?.file) return [still.file];
 
   const paths: string[] = [];
   // Looked up through the same dedupe the archiver used, so the keys match;
@@ -174,10 +181,16 @@ export interface OrphanQuery {
  *
  * A thumbnail is not referenced by anything on its own; it belongs to the
  * file it was generated from and lives and dies with it.
+ *
+ * A file named after its note says nothing about who made it, so the cache
+ * vouches for those: anything it archived or derived is the plugin's.
  */
 export function orphanFiles({ live, cache, onDisk }: OrphanQuery): string[] {
   const spoken = new Set(filesForRefs(live, cache));
-  return onDisk.filter((path) => !spoken.has(path) && isPluginOwned(basename(path)));
+  const archived = new Set(cache.flatMap((entry) => [entry.file, entry.thumb].filter(Boolean)));
+  return onDisk.filter(
+    (path) => !spoken.has(path) && (archived.has(path) || isPluginOwned(basename(path)))
+  );
 }
 
 /**

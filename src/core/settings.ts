@@ -12,6 +12,11 @@ export interface OrikoSettings {
   watchClippings: boolean;
   autoplayVideo: boolean;
   maxBytes: number;
+  /**
+   * Download a post's own video. Off, a post keeps only a still of it, which
+   * costs a fraction of the space and none of the download time.
+   */
+  keepVideos: boolean;
   thumbnailWidth: number;
   /**
    * Allow community mirrors to resolve media that a site will not publish
@@ -123,6 +128,7 @@ export const DEFAULT_SETTINGS: OrikoSettings = {
   watchClippings: true,
   autoplayVideo: true,
   maxBytes: 26214400,
+  keepVideos: true,
   thumbnailWidth: 400,
   useResolvers: true,
   filterProperties: ["categories", "status"],

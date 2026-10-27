@@ -118,3 +118,52 @@ export class ConfirmSweepModal extends Modal {
     this.contentEl.empty();
   }
 }
+
+/**
+ * Renaming touches files other tools may point at, so the run shows what it
+ * will do first: a few old names beside their new ones.
+ */
+export class ConfirmRenameModal extends Modal {
+  constructor(
+    app: App,
+    private renames: Array<{ from: string; to: string }>,
+    private onConfirm: () => void
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    const count = this.renames.length;
+    const name = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
+
+    this.setTitle(count === 1 ? "Rename 1 media file?" : `Rename ${count} media files?`);
+    contentEl.createEl("p", {
+      text: "Each file takes the name of the note that uses it, and the note's links follow.",
+    });
+
+    const list = contentEl.createEl("ul", { cls: "pg-confirm-list" });
+    for (const rename of this.renames.slice(0, 8)) {
+      list.createEl("li", { text: `${name(rename.from)} → ${name(rename.to)}` });
+    }
+    if (count > 8) {
+      list.createEl("li", { text: `and ${count - 8} more…`, cls: "pg-confirm-more" });
+    }
+
+    new Setting(contentEl)
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
+      .addButton((button) =>
+        button
+          .setButtonText("Rename")
+          .setCta()
+          .onClick(() => {
+            this.close();
+            this.onConfirm();
+          })
+      );
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}

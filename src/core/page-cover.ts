@@ -1,4 +1,4 @@
-import { dedupeMedia, sourceVideoKeyFor } from "./normalize";
+import { dedupeMedia, sourceStillKeyFor, sourceVideoKeyFor } from "./normalize";
 import type { MediaRef } from "./scan";
 
 export interface ThumbnailCandidate {
@@ -25,6 +25,22 @@ const YOUTUBE_PATHS = /^\/(?:embed|shorts|v|live)\/([A-Za-z0-9_-]{11})/;
  * rejects it; this turns it into a real cover instead.
  */
 export function knownHostThumbnail(pageUrl: string): ThumbnailCandidate | null {
+  const id = youtubeVideoId(pageUrl);
+  if (!id) return null;
+
+  // maxres exists only for videos uploaded at that resolution, so the
+  // archiver walks down to sizes YouTube always generates.
+  return {
+    url: `https://img.youtube.com/vi/${id}/maxresdefault.jpg`,
+    fallbacks: [
+      `https://img.youtube.com/vi/${id}/hq720.jpg`,
+      `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
+    ],
+  };
+}
+
+/** The video id of a YouTube watch, share, embed or shorts URL, or null. */
+export function youtubeVideoId(pageUrl: string): string | null {
   let parsed: URL;
   try {
     parsed = new URL(pageUrl);
@@ -41,17 +57,7 @@ export function knownHostThumbnail(pageUrl: string): ThumbnailCandidate | null {
     id = parsed.searchParams.get("v") ?? YOUTUBE_PATHS.exec(parsed.pathname)?.[1] ?? null;
   }
 
-  if (!id || !YOUTUBE_ID.test(id)) return null;
-
-  // maxres exists only for videos uploaded at that resolution, so the
-  // archiver walks down to sizes YouTube always generates.
-  return {
-    url: `https://img.youtube.com/vi/${id}/maxresdefault.jpg`,
-    fallbacks: [
-      `https://img.youtube.com/vi/${id}/hq720.jpg`,
-      `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
-    ],
-  };
+  return id && YOUTUBE_ID.test(id) ? id : null;
 }
 
 const META_TAG = /<meta\b[^>]*>/gi;
@@ -174,5 +180,6 @@ export function needsPageCover(
   // tile shows it ahead of anything fetched for the page.
   if (record.media.some((media) => !/^https?:\/\//i.test(media.url))) return false;
   if (archivedFile(sourceVideoKeyFor(record.source))) return false;
+  if (archivedFile(sourceStillKeyFor(record.source))) return false;
   return !dedupeMedia(record.media).some((media) => archivedFile(media.key));
 }

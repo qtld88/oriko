@@ -18,6 +18,7 @@ import { ArchiveService } from "./archive-service";
 import { CaptureService } from "./capture";
 import { FolderPickerModal } from "./folder-picker";
 import { FormatService, describeSummary } from "./format-service";
+import { RenameService } from "./rename-service";
 import { ClippingIndex } from "./index-store";
 import { OrikoSettings, DEFAULT_SETTINGS } from "./core/settings";
 import { isStage } from "./core/density";
@@ -53,6 +54,7 @@ export default class OrikoPlugin extends Plugin {
   capture!: CaptureService;
   sorter!: SortService;
   format!: FormatService;
+  renamer!: RenameService;
   /** The last shared file this device wrote, to recognise its own echo. */
   private wroteShared = "";
   /**
@@ -106,6 +108,12 @@ export default class OrikoPlugin extends Plugin {
       this.sorter.attempts
     );
     this.format = new FormatService(
+      this.app,
+      () => this.settings,
+      this.archiver,
+      this.index
+    );
+    this.renamer = new RenameService(
       this.app,
       () => this.settings,
       this.archiver,
@@ -254,8 +262,21 @@ export default class OrikoPlugin extends Plugin {
             .setIcon(ORIKO_ICON_ID)
             .onClick(() => void this.formatFolder(file))
         );
+        menu.addItem((item) =>
+          item
+            .setTitle("Rename media after their notes")
+            .setIcon(ORIKO_ICON_ID)
+            .onClick(() => this.renamer.renameFolder(file))
+        );
       })
     );
+
+    this.addCommand({
+      id: "rename-media",
+      name: "Rename media after their notes in a folder…",
+      callback: () =>
+        new FolderPickerModal(this.app, (folder) => this.renamer.renameFolder(folder)).open(),
+    });
 
     this.addCommand({
       id: "archive-clipping-media",

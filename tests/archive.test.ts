@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { archiveAll, archiveFilename, archiveOne, sourceVideoCandidates } from "../src/core/archive";
+import {
+  archiveAll,
+  archiveFilename,
+  archiveOne,
+  sourceVideoCandidates,
+  sourceVideoPath,
+} from "../src/core/archive";
 import { hashUrl } from "../src/core/hash";
 import type { ArchiveDeps, Fetcher } from "../src/core/archive";
 import type { CanonicalMedia } from "../src/core/normalize";
@@ -70,6 +76,24 @@ describe("archiveFilename", () => {
       alt: "",
     });
     expect(name).toMatch(/^[0-9a-f]{12}-HP7q-WqXoAAqzO0\.jpg$/);
+  });
+
+  it("names the file after its note, keeping the hash", () => {
+    expect(archiveFilename(media, "My clipping")).toBe(`My clipping ${hashUrl(media.key)}.jpg`);
+  });
+
+  it("strips what a file name or a wikilink cannot carry from the note name", () => {
+    const name = archiveFilename(media, "A/B: [c] #d?");
+    expect(name).toBe(`A B c d ${hashUrl(media.key)}.jpg`);
+  });
+
+  it("gives two media of one note different names", () => {
+    const other = { ...media, key: "https://x.com/b.jpg", url: "https://x.com/b.jpg" };
+    expect(archiveFilename(media, "Note")).not.toBe(archiveFilename(other, "Note"));
+  });
+
+  it("keeps the older name when the note name has nothing left", () => {
+    expect(archiveFilename(media, " ?* ")).toMatch(/^[0-9a-f]{12}-a\.jpg$/);
   });
 
   it("truncates a very long basename", () => {
@@ -362,7 +386,32 @@ describe("archiveAll", () => {
   });
 });
 
+describe("archiveOne naming", () => {
+  it("writes the file under its note's name", async () => {
+    const d = deps({ note: "My clipping" });
+    const out = await archiveOne(media, "", d);
+    expect(out.file).toBe(`Attachments/Clippings/My clipping ${hashUrl(media.key)}.jpg`);
+  });
+
+  it("adopts a copy archived under the older name instead of fetching again", async () => {
+    const legacy = `Attachments/Clippings/${archiveFilename(media)}`;
+    const d = deps({ note: "My clipping", exists: vi.fn(async (p: string) => p === legacy) });
+    const out = await archiveOne(media, "", d);
+    expect(out.file).toBe(legacy);
+    expect(d.fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe("sourceVideoCandidates", () => {
+  it("looks for the note-named file first, then the older name", () => {
+    const key = "source-video:https://a/reel/1";
+    const hash = hashUrl(key);
+    const paths = sourceVideoCandidates(key, "F", "Reel");
+    expect(paths[0]).toBe(`F/Reel ${hash}.mp4`);
+    expect(paths).toContain(`F/${hash}-video.mp4`);
+    expect(sourceVideoPath(key, "F", "mp4", "Reel")).toBe(paths[0]);
+  });
+
   it("lists one path per playable extension, under the folder, keyed by hash", () => {
     const paths = sourceVideoCandidates("source-video:https://a/reel/1", "Attachments/Clippings");
     const hash = hashUrl("source-video:https://a/reel/1");

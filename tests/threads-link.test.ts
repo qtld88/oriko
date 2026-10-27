@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   cardImageUrl,
-  isThreadsAvatar,
   parseProbe,
   readAuthorLink,
   showsOnlyAvatar,
@@ -67,24 +66,6 @@ describe("cardImageUrl", () => {
     expect(cardImageUrl("")).toBeNull();
     expect(cardImageUrl("data:image/gif;base64,R0lGOD")).toBeNull();
     expect(cardImageUrl("https://external.fbcdn.net/x?url=javascript%3Aalert(1)")).toBeNull();
-  });
-});
-
-describe("isThreadsAvatar", () => {
-  it("recognises a profile picture by its Instagram CDN path", () => {
-    expect(
-      isThreadsAvatar("https://scontent-bru2-1.cdninstagram.com/v/t51.2885-19/4718_n.jpg?stp=dst")
-    ).toBe(true);
-    expect(
-      isThreadsAvatar("https://scontent.cdninstagram.com/v/t51.82787-19/5297_n.jpg?_nc_ht=x")
-    ).toBe(true);
-  });
-
-  it("leaves a post's own picture alone", () => {
-    expect(
-      isThreadsAvatar("https://scontent.cdninstagram.com/v/t51.2885-15/6491_n.jpg?stp=dst")
-    ).toBe(false);
-    expect(isThreadsAvatar("https://octostudio.org/images/hero.png")).toBe(false);
   });
 });
 

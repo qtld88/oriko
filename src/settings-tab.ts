@@ -326,8 +326,13 @@ export class OrikoSettingTab extends PluginSettingTab {
             },
           },
           {
+            name: "Download videos",
+            desc: "Keeps a post's own video. Off saves space and time: a post keeps only a still of its video, taken without downloading it.",
+            control: { type: "toggle", key: "keepVideos" },
+          },
+          {
             name: "Maximum file size (MB)",
-            desc: "Skip downloads larger than this.",
+            desc: "Skip downloads larger than this. A video over the limit leaves a still of itself instead.",
             control: { type: "number", key: "maxSizeMb" },
           },
           {
