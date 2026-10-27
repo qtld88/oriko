@@ -14,7 +14,9 @@ export type ThreadsItem =
   /** A post's header: the permalink to a post, with its author. */
   | { kind: "post"; user: string; code: string }
   /** An outbound link, exactly as the page wrote it. `image` is the card's picture. */
-  | { kind: "link"; href: string; image: string | null };
+  | { kind: "link"; href: string; image: string | null }
+  /** A video player, which belongs to the post whose header came before it. */
+  | { kind: "video" };
 
 export interface AuthorLink {
   /** The address the author's reply links to. */
@@ -84,9 +86,10 @@ export function showsOnlyAvatar(media: Array<{ url: string; kind: "image" | "vid
 interface Block {
   user: string;
   links: Array<Extract<ThreadsItem, { kind: "link" }>>;
+  video: boolean;
 }
 
-/** The posts the page shows, each with the links that follow it, repeats folded in. */
+/** The posts the page shows, each with its links and video, repeats folded in. */
 function blocks(items: ThreadsItem[]): Block[] {
   const byCode = new Map<string, Block>();
   const out: Block[] = [];
@@ -95,11 +98,13 @@ function blocks(items: ThreadsItem[]): Block[] {
     if (item.kind === "post") {
       let block = byCode.get(item.code);
       if (!block) {
-        block = { user: item.user.toLowerCase(), links: [] };
+        block = { user: item.user.toLowerCase(), links: [], video: false };
         byCode.set(item.code, block);
         out.push(block);
       }
       current = block;
+    } else if (item.kind === "video") {
+      if (current) current.video = true;
     } else {
       current?.links.push(item);
     }
@@ -123,10 +128,10 @@ function firstLink(block: Block): AuthorLink | null {
 /**
  * What the page says about the link behind a post.
  *
- * Only a post with no link of its own is worth looking past: one that has a
- * link keeps the picture it already has. Past it, only the author's first
- * reply counts. A reply from anyone else, or a later one, is a different
- * conversation.
+ * Only a post with neither a link nor a video of its own is worth looking
+ * past: one that has either is about that, and keeps the picture it already
+ * has. Past it, only the author's first reply counts. A reply from anyone
+ * else, or a later one, is a different conversation.
  *
  * `decided: false` means the page has not shown enough yet, because replies
  * arrive after the post does. It is not an answer, and the caller waits.
@@ -134,7 +139,7 @@ function firstLink(block: Block): AuthorLink | null {
 export function readAuthorLink(items: ThreadsItem[]): AuthorLinkRead {
   const [main, reply, after] = blocks(items);
   if (!main) return { decided: false };
-  if (firstLink(main)) return { decided: true, link: null };
+  if (main.video || firstLink(main)) return { decided: true, link: null };
   if (!reply) return { decided: false };
 
   if (reply.user !== main.user) return { decided: true, link: null };
@@ -146,19 +151,23 @@ export function readAuthorLink(items: ThreadsItem[]): AuthorLinkRead {
 
 /**
  * Runs inside the loaded page and reports what it shows, in order: every
- * post header and every outbound link, as JSON for `items`. A post header is
- * a permalink that wraps a `<time>`, which is also what tells it from the
- * "Thread" link on the post itself. A cookie dialog is skipped, since its
- * links are Meta's. A string because it is evaluated in another process, so
- * it names nothing from this module.
+ * post header, video player and outbound link, as JSON for `items`. A post
+ * header is a permalink that wraps a `<time>`, which is also what tells it
+ * from the "Thread" link on the post itself. A cookie dialog is skipped,
+ * since its links are Meta's. A string because it is evaluated in another
+ * process, so it names nothing from this module.
  */
 export const THREADS_PROBE = `(() => {
   const items = [];
   const nodes = document.querySelectorAll(
-    'time, a[href^="https://l.threads.com/"], a[href^="https://l.threads.net/"], a[href^="https://l.instagram.com/"]'
+    'time, video, a[href^="https://l.threads.com/"], a[href^="https://l.threads.net/"], a[href^="https://l.instagram.com/"]'
   );
   for (const el of nodes) {
     if (el.closest('[role="dialog"]')) continue;
+    if (el.tagName === "VIDEO") {
+      items.push({ kind: "video" });
+      continue;
+    }
     if (el.tagName === "TIME") {
       const a = el.closest("a[href]");
       const m = a && /^\\/@([^/]+)\\/post\\/([^/?#]+)/.exec(new URL(a.href).pathname);
@@ -193,6 +202,8 @@ export function parseProbe(raw: unknown): ThreadsItem[] {
   for (const entry of data as Array<Record<string, unknown>>) {
     if (entry?.kind === "post" && typeof entry.user === "string" && typeof entry.code === "string") {
       items.push({ kind: "post", user: entry.user, code: entry.code });
+    } else if (entry?.kind === "video") {
+      items.push({ kind: "video" });
     } else if (entry?.kind === "link" && typeof entry.href === "string") {
       items.push({
         kind: "link",

@@ -14,6 +14,7 @@ const link = (href: string, image: string | null = null): ThreadsItem => ({
   href,
   image,
 });
+const video: ThreadsItem = { kind: "video" };
 const wrapped = (target: string): string =>
   `https://l.threads.com/?u=${encodeURIComponent(target)}&e=AUB7bJ8F`;
 
@@ -100,6 +101,7 @@ describe("parseProbe", () => {
   it("reads the items the page reported", () => {
     const items: ThreadsItem[] = [
       { kind: "post", user: "figi", code: "A" },
+      { kind: "video" },
       { kind: "link", href: "https://l.threads.com/?u=x", image: "https://i.example/x.png" },
       { kind: "link", href: "https://l.threads.com/?u=y", image: null },
     ];
@@ -205,6 +207,43 @@ describe("readAuthorLink", () => {
     const items = [post("Figi", "A"), post("figi", "B"), link(wrapped("https://e.com/")), post("k", "C")];
     expect(readAuthorLink(items).decided).toBe(true);
     expect(readAuthorLink(items)).toMatchObject({ link: { url: "https://e.com/" } });
+  });
+
+  it("does nothing when the post has a video, whatever the author's reply links to", () => {
+    const items = [
+      post("figi", "A"),
+      video,
+      post("figi", "B"),
+      link(wrapped("https://e.com/"), "https://e.com/x.png"),
+      post("k", "C"),
+    ];
+    expect(readAuthorLink(items)).toEqual({ decided: true, link: null });
+  });
+
+  it("does not wait for replies once the post is known to have a video", () => {
+    expect(readAuthorLink([post("figi", "A"), video])).toEqual({ decided: true, link: null });
+  });
+
+  it("is not stopped by a video in the reply", () => {
+    const items = [
+      post("figi", "A"),
+      post("figi", "B"),
+      video,
+      link(wrapped("https://e.com/")),
+      post("k", "C"),
+    ];
+    expect(readAuthorLink(items)).toMatchObject({ decided: true, link: { url: "https://e.com/" } });
+  });
+
+  it("is not stopped by a video in a related post further down the page", () => {
+    const items = [
+      post("figi", "A"),
+      post("figi", "B"),
+      link(wrapped("https://e.com/")),
+      post("other", "Z"),
+      video,
+    ];
+    expect(readAuthorLink(items)).toMatchObject({ decided: true, link: { url: "https://e.com/" } });
   });
 
   it("waits while only the post has rendered and it shows no link", () => {

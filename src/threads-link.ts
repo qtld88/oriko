@@ -43,6 +43,7 @@ export async function findAuthorLink(pageUrl: string): Promise<AuthorLink | null
       let poll = 0;
       let shown = 0;
       let quiet = 0;
+      let lastAnswer: string | null = null;
       const finish = (value: AuthorLink | null): void => {
         if (done) return;
         done = true;
@@ -58,7 +59,16 @@ export async function findAuthorLink(pageUrl: string): Promise<AuthorLink | null
             try {
               const items = parseProbe(await view.executeJavaScript(THREADS_PROBE));
               const read = readAuthorLink(items);
-              if (read.decided) return finish(read.link);
+              if (read.decided) {
+                // Taken only once two polls in a row agree: a post's player
+                // mounts a moment after its replies appear, and a post with
+                // a video must not be settled on the link beneath it.
+                const answer = JSON.stringify(read.link);
+                if (answer === lastAnswer) return finish(read.link);
+                lastAnswer = answer;
+                return;
+              }
+              lastAnswer = null;
               quiet = items.length > 0 && items.length === shown ? quiet + 1 : 0;
               shown = items.length;
               if (quiet >= QUIET_POLLS) finish(null);
